@@ -18,8 +18,7 @@ def worker_function(p1, p2):
 
     status = random.randrange(2)
 
-    # note that we use exit and not return because
-    # we return and exit code to the parent process
+    # note that we use exit and not return because we must return an exit code to the parent process
     exit(status)
 
 
@@ -57,7 +56,7 @@ def main():
         worker_ids[pid] = arg_list[1]
 
     # wait for completion - the join call only returns immediatly if the process is done
-    # and waits for completion if the process is running
+    # and waits for completion if the process is still running
     # since we call it for all of them we are in the loop until all of them are done
     for proc in procs:
         proc.join()
