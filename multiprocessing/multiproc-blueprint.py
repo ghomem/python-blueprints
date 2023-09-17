@@ -82,7 +82,7 @@ def main():
     # now we can go on with the main program execution and collect results from the parallel execution
 
     print('')
-    print('Now, business as usual. The program continues...')
+    print('Multiprocessing done. The program continues...')
 
 
 main()
