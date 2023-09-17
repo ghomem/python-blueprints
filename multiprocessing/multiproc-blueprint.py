@@ -18,7 +18,7 @@ def worker_function(p1, p2):
 
     status = random.randrange(2)
 
-    # note that we use exit and not return because we must return an exit code to the parent process
+    # note that we use exit and not return because we must deliver the exit code to the parent process
     exit(status)
 
 
@@ -36,7 +36,7 @@ def main():
     worker_functions = [ worker_function, worker_function, worker_function, worker_function, worker_function ]
 
     # this is a list with the arguments that will be passed to each independent worker_function
-    # in a real world case it would probably be made of data chunks to process
+    # in a real world case it would probably include data chunks to be processed or paths to CSV files or ...
     worker_args = [ ('Worker1', 'New York'), ('Worker2', 'London'), ('Worker3', 'Sydney'), ('Worker4', 'Lisbon'), ('Worker5', 'Paris'), ]
 
     procs = []
@@ -71,17 +71,15 @@ def main():
         if exit_code != 0:
             status_OK = False
 
-        # review each processes exit code
+        # review each processe's exit code
         print(f"{worker_ids[pid]:10} returned: {exit_code}")
 
     # check if all processes returned 0
     if status_OK is not True:
-        # in a real world situation we would want to react to this circumstance
-        # with more than a simple message
+        # in a real world situation we would want to react to this circumstance with more than a simple message
         print('\nWARNING: At least one process exited with an error')
 
-    # now we can go on with the main program execution and collect results
-    # from the parallel execution
+    # now we can go on with the main program execution and collect results from the parallel execution
 
     print('')
     print('Now, business as usual. The program continues...')
