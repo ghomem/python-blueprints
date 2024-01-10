@@ -22,7 +22,7 @@ CLIENT_TIMEOUT = 3
 BACKOFF_FACTOR = 1
 
 # list of status codes to retry
-FORCE_RETRY_STATUS_CODE_LIST = [500, 502, 503, 504]
+FORCE_RETRY_STATUS_CODE_LIST = [500, 502, 503, 504, 429]
 
 
 def main():
