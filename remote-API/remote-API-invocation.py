@@ -50,7 +50,7 @@ def main():
     # are hanging until a timeout which is a different situation)
     #
     # the formula for calculating this is the partial sum of a geometric series of ratio 2
-    max_backoff_time = args.backoff_factor * (1 - (2 ** args.nr_retries) ) / (1 - 2)
+    max_backoff_time = args.backoff_factor * (1 - (2 ** (args.nr_retries-1)) ) / (1 - 2)
 
     print("Worst case time spent on backoff delays: ", max_backoff_time)
 
