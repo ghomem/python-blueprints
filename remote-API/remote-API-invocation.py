@@ -61,8 +61,10 @@ def main():
     # the 2 * args.client_timeout  factor models a very slow establishment of the connection,
     # just infinitesimaly under args.client_timeout, followed by a very slow read that actually
     # times out at args.client_timeout
-    max_execution_time = max_backoff_time + (args.nr_retries + 1) * (2 * args.client_timeout)
+    max_mitigation_time = max_backoff_time + (args.nr_retries + 0) * (2 * args.client_timeout)
+    max_execution_time  = max_backoff_time + (args.nr_retries + 1) * (2 * args.client_timeout)
 
+    print("Worst case mitigation time: ", max_mitigation_time)
     print("Worst case execution time: ", max_execution_time)
 
     # generate a session for persisting the configuration of retry
