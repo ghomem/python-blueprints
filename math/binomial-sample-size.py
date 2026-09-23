@@ -40,17 +40,49 @@ def find_minimum_sample_size_it(E: float, alpha: float, buffer_size: int, max_sa
     raise RuntimeError(f"No suitable sample size found below ceiling max_sample={max_sample}")
 
 
-def find_minimum_sample_size_lb(E: float, alpha: float = 0.05) -> int:
-    """
-    Computes sample size n using the Stirling-to-Lambert W continuous approximation.
-    Formula: n = ceil( (1 / (4 * E^2)) * W_0( 1 / (pi * alpha^2) ) )
+def find_minimum_sample_size_lb(E: float, alpha: float = 0.05, corrected: bool = False) -> int:
+    """Computes the minimum sample size n using the analytical Lambert W function
+
+    derived from Stirling's approximation.
+
+    Parameters:
+    -----------
+    E : float
+        Target error margin offset around 0.5 (e.g., 0.05 for 5% margin).
+    alpha : float, optional
+        Significance level / tail risk (default 0.05 for 95% confidence).
+    corrected : bool, optional
+        If False (default), returns the pure continuous Stirling lower bound (n ≈ 358).
+        If True, applies the discrete tail factor (C = 2 / (pi * alpha^2)) and the
+        half-step continuity shift (-1 / (2*E)), providing a conservative discrete
+        envelope (n ≈ 420) that safely bounds the discrete sawtooth floor (n = 399).
+
+    Returns:
+    --------
+    int
+        The minimum integer sample size n.
     """
 
-    arg = 1.0 / (math.pi * (alpha ** 2))
-    w0_val = float(lambertw(arg).real)
-    scale = 1.0 / (4.0 * (E ** 2))
+    if corrected:
+        # Discrete density factor: accounts for two-sided tail integration over unit bars
+        arg = 2.0 / (math.pi * (alpha**2))
+        w0_val = float(lambertw(arg).real)
 
-    return math.ceil(scale * w0_val)
+        # Base scale factor: 1 / (4 * E^2)
+        base_n = w0_val / (4.0 * (E**2))
+
+        # Continuity shift: adjusts for half-unit discrete histogram bar width
+        continuity_shift = 1.0 / (2.0 * E)
+
+        n_float = base_n - continuity_shift
+    else:
+        # Pure continuous asymptotic lower bound
+        arg = 1.0 / (math.pi * (alpha**2))
+        w0_val = float(lambertw(arg).real)
+
+        n_float = w0_val / (4.0 * (E**2))
+
+    return math.ceil(n_float)
 
 
 def main():
@@ -78,12 +110,14 @@ def main():
     try:
         n_min_it = find_minimum_sample_size_it(E=args.error, alpha=args.alpha, buffer_size=args.buffer, max_sample=args.max_sample)
         n_min_lb = find_minimum_sample_size_lb(E=args.error, alpha=args.alpha)
+        n_min_lb_cc = find_minimum_sample_size_lb(E=args.error, alpha=args.alpha, corrected=True)
 
-        # add margin
-        n_min_lb_adjusted = int(n_min_lb * 1.15)
+        # add adhoc margin
+        n_min_lb_adhoc = int(n_min_lb * 1.15)
 
         lb_deviation_pct = round(((n_min_lb - n_min_it) / n_min_it) * 100, 1)
-        lb_safe_deviation_pct = round(((n_min_lb_adjusted - n_min_it) / n_min_it) * 100, 1)
+        lb_adhoc_deviation_pct = round(((n_min_lb_adhoc - n_min_it) / n_min_it) * 100, 1)
+        lb_corrected_deviation_pct = round(((n_min_lb_cc - n_min_it) / n_min_it) * 100, 1)
 
         confidence_pct = (1.0 - args.alpha) * 100
         error_pct = args.error * 100
@@ -92,9 +126,10 @@ def main():
         print(f"Error margin     : ±{error_pct:.2f}% (E = {args.error})")
         print()
         if args.verbose:
-            print(f"Minimum Sample Size (n) - iterative method:        {n_min_it}")
-            print(f"Minimum Sample Size (n) - Lambert method:          {n_min_lb} - deviation from iterative: {lb_deviation_pct}%")
-            print(f"Minimum Sample Size (n) - Lambert method adjusted: {n_min_lb_adjusted} - deviation from iterative: {lb_safe_deviation_pct}%")
+            print(f"Minimum Sample Size (n) - iterative method:         {n_min_it}")
+            print(f"Minimum Sample Size (n) - Lambert method base:      {n_min_lb} - deviation from iterative: {lb_deviation_pct}%")
+            print(f"Minimum Sample Size (n) - Lambert method corrected: {n_min_lb_cc} - deviation from iterative: {lb_corrected_deviation_pct}%")
+            print(f"Minimum Sample Size (n) - Lambert method adhoc :    {n_min_lb_adhoc} - deviation from iterative: {lb_adhoc_deviation_pct}%")
         else:
             print(f"Minimum Sample Size (n): {n_min_it}")
 
