@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Ubuntu packages: python3-scipy, python3-matplotlib
 """Exact Binomial Sample Size Calculator.
 
 Calculates the minimal sample size (n) required for a given margin of error (E)
@@ -7,8 +8,11 @@ exact Binomial Cumulative Distribution Function (CDF).
 """
 
 import argparse
+import csv
+import os
 import sys
 import math
+import tempfile
 from scipy.stats import binom
 from scipy.special import lambertw
 
@@ -85,6 +89,59 @@ def find_minimum_sample_size_lb(E: float, alpha: float = 0.05, corrected: bool =
     return math.ceil(n_float)
 
 
+EXPLORE_ERRORS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10]
+EXPLORE_ALPHAS = [0.01, 0.05, 0.10]
+
+
+def explore(output_dir: str, buffer_size: int, max_sample: int) -> None:
+    """Sweep the (E, alpha) grid, write a CSV table and a plot."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    results = {}
+    total = len(EXPLORE_ERRORS) * len(EXPLORE_ALPHAS)
+    done = 0
+    for E in EXPLORE_ERRORS:
+        for alpha in EXPLORE_ALPHAS:
+            done += 1
+            print(f"\r  Computing {done}/{total}  (E={E}, alpha={alpha}) ...", end="", flush=True)
+            n = find_minimum_sample_size_it(E, alpha, buffer_size, max_sample)
+            results[(E, alpha)] = n
+    print()
+
+    csv_path = os.path.join(output_dir, "sample_sizes.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        header = ["E \\ alpha"] + [str(a) for a in EXPLORE_ALPHAS]
+        writer.writerow(header)
+        for E in EXPLORE_ERRORS:
+            row = [str(E)] + [str(results[(E, a)]) for a in EXPLORE_ALPHAS]
+            writer.writerow(row)
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    for alpha in reversed(EXPLORE_ALPHAS):
+        ns = [results[(E, alpha)] for E in EXPLORE_ERRORS]
+        confidence = f"{(1 - alpha) * 100:.0f}%"
+        ax.plot(EXPLORE_ERRORS, ns, marker="o", label=f"{confidence} confidence (α={alpha})")
+    ax.set_yscale("linear")
+    ax.set_xlabel("Margin of Error (E)")
+    ax.set_ylabel("Minimum Sample Size (n)")
+    ax.set_title("Exact Binomial Sample Size vs. Margin of Error")
+    ax.legend()
+    ax.grid(True, which="both", linestyle="--", alpha=0.5)
+    ax.set_xticks(EXPLORE_ERRORS)
+    ax.set_xticklabels([f"{e:.0%}" for e in EXPLORE_ERRORS])
+    fig.tight_layout()
+
+    plot_path = os.path.join(output_dir, "sample_sizes.png")
+    fig.savefig(plot_path, dpi=150)
+    plt.close(fig)
+
+    print(f"CSV  : {csv_path}")
+    print(f"Plot : {plot_path}")
+
+
 def main():
 
     parser = argparse.ArgumentParser(description=(
@@ -98,8 +155,24 @@ def main():
     parser.add_argument("-m", "--max-sample", type=int,   default=200000, help="Upper ceiling for sample size search iteration.",)
 
     parser.add_argument("--verbose", help="Print other esimations as well", action="store_true")
+    parser.add_argument("--explore", action="store_true", help="Sweep industry-standard (E, alpha) combinations and produce a CSV table and plot. Mutually exclusive with --error and --alpha.")
+    parser.add_argument("--output-dir", type=str, default=None, help="Output directory for --explore files (default: Python tempdir).")
 
     args = parser.parse_args()
+
+    if args.explore:
+        if any(a.dest in ("error", "alpha") for a in parser._actions
+               if a.option_strings and any(s in sys.argv for s in a.option_strings)):
+            parser.error("--explore is mutually exclusive with --error and --alpha")
+
+        output_dir = args.output_dir or tempfile.mkdtemp(prefix="binomial_explore_")
+        os.makedirs(output_dir, exist_ok=True)
+        try:
+            explore(output_dir, args.buffer, args.max_sample)
+        except RuntimeError as err:
+            print(f"Error: {err}", file=sys.stderr)
+            sys.exit(1)
+        return
 
     # Input validation
     if not (0 < args.error < 0.5):
