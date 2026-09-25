@@ -13,8 +13,10 @@ import os
 import sys
 import math
 import tempfile
+import numpy as np
 from scipy.stats import binom
 from scipy.special import lambertw
+from scipy.optimize import curve_fit
 
 
 def verify_sample_size(n: int, E: float, alpha: float) -> bool:
@@ -138,8 +140,45 @@ def explore(output_dir: str, buffer_size: int, max_sample: int) -> None:
     fig.savefig(plot_path, dpi=150)
     plt.close(fig)
 
+    # Second plot: fit n = C^2 / E^2 for each alpha
+    def model(E, C):
+        return C**2 / E**2
+
+    E_arr = np.array(EXPLORE_ERRORS)
+    E_smooth = np.linspace(E_arr.min(), E_arr.max(), 200)
+
+    fig2, ax2 = plt.subplots(figsize=(9, 6))
+    for alpha in reversed(EXPLORE_ALPHAS):
+        n_arr = np.array([results[(E, alpha)] for E in EXPLORE_ERRORS], dtype=float)
+        popt, _ = curve_fit(model, E_arr, n_arr, p0=[1.0])
+        C_fit = popt[0]
+
+        n_pred = model(E_arr, C_fit)
+        ss_res = np.sum((n_arr - n_pred)**2)
+        ss_tot = np.sum((n_arr - np.mean(n_arr))**2)
+        r2 = 1.0 - ss_res / ss_tot
+
+        confidence = f"{(1 - alpha) * 100:.0f}%"
+        ax2.plot(E_arr, n_arr, "o", color=ax2._get_lines.get_next_color())
+        color = ax2.get_lines()[-1].get_color()
+        ax2.plot(E_smooth, model(E_smooth, C_fit), "-", color=color,
+                 label=f"{confidence} (α={alpha})  C={C_fit:.4f}  R²={r2:.6f}")
+    ax2.set_xlabel("Margin of Error (E)")
+    ax2.set_ylabel("Minimum Sample Size (n)")
+    ax2.set_title("Fitted n = C² / E²  per Confidence Level")
+    ax2.legend()
+    ax2.grid(True, which="both", linestyle="--", alpha=0.5)
+    ax2.set_xticks(EXPLORE_ERRORS)
+    ax2.set_xticklabels([f"{e:.0%}" for e in EXPLORE_ERRORS])
+    fig2.tight_layout()
+
+    fit_path = os.path.join(output_dir, "sample_sizes_fit.png")
+    fig2.savefig(fit_path, dpi=150)
+    plt.close(fig2)
+
     print(f"CSV  : {csv_path}")
     print(f"Plot : {plot_path}")
+    print(f"Fit  : {fit_path}")
 
 
 def main():
