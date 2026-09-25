@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-# Ubuntu packages: python3-scipy, python3-matplotlib
+
+# Necessary Ubuntu packages: python3-scipy, python3-matplotlib
+
 """Exact Binomial Sample Size Calculator.
 
 Calculates the minimal sample size (n) required for a given margin of error (E)
 and confidence level (1 - alpha) at maximum dispersion (p = 0.5) using the
 exact Binomial Cumulative Distribution Function (CDF).
+
+Provides extra calculation methods, verbose execution and exploratory outputs.
 """
 
 import argparse
@@ -17,6 +21,13 @@ import numpy as np
 from scipy.stats import binom
 from scipy.special import lambertw
 from scipy.optimize import curve_fit
+
+
+EXPLORE_ERRORS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10]
+EXPLORE_ALPHAS = [0.01, 0.05, 0.10]
+
+# Fitted C values from n = C² / E² (derived from exact iterative results)
+FIT_C = {0.01: 1.2906, 0.05: 0.9826, 0.10: 0.8252}
 
 
 def verify_sample_size(n: int, E: float, alpha: float) -> bool:
@@ -89,13 +100,6 @@ def find_minimum_sample_size_lb(E: float, alpha: float = 0.05, corrected: bool =
         n_float = w0_val / (4.0 * (E**2))
 
     return math.ceil(n_float)
-
-
-EXPLORE_ERRORS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10]
-EXPLORE_ALPHAS = [0.01, 0.05, 0.10]
-
-# Fitted C values from n = C² / E² (derived from exact iterative results)
-FIT_C = {0.01: 1.2906, 0.05: 0.9826, 0.10: 0.8252}
 
 
 def find_minimum_sample_size_fit(E: float, alpha: float) -> int | None:
