@@ -94,6 +94,17 @@ def find_minimum_sample_size_lb(E: float, alpha: float = 0.05, corrected: bool =
 EXPLORE_ERRORS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10]
 EXPLORE_ALPHAS = [0.01, 0.05, 0.10]
 
+# Fitted C values from n = C² / E² (derived from exact iterative results)
+FIT_C = {0.01: 1.2906, 0.05: 0.9826, 0.10: 0.8252}
+
+
+def find_minimum_sample_size_fit(E: float, alpha: float) -> int | None:
+    """Estimate n via the fitted n = C² / E² model. Returns None if alpha has no precomputed C."""
+    C = FIT_C.get(alpha)
+    if C is None:
+        return None
+    return math.ceil(C**2 / E**2)
+
 
 def explore(output_dir: str, buffer_size: int, max_sample: int) -> None:
     """Sweep the (E, alpha) grid, write a CSV table and a plot."""
@@ -107,10 +118,10 @@ def explore(output_dir: str, buffer_size: int, max_sample: int) -> None:
     for E in EXPLORE_ERRORS:
         for alpha in EXPLORE_ALPHAS:
             done += 1
-            print(f"\r  Computing {done}/{total}  (E={E}, alpha={alpha}) ...", end="", flush=True)
+            print(f"\rComputing {done}/{total}  (E={E}, alpha={alpha}) ...", end="", flush=True)
             n = find_minimum_sample_size_it(E, alpha, buffer_size, max_sample)
             results[(E, alpha)] = n
-    print()
+    print('\n')
 
     csv_path = os.path.join(output_dir, "sample_sizes.csv")
     with open(csv_path, "w", newline="") as f:
@@ -242,6 +253,10 @@ def main():
             print(f"Minimum Sample Size (n) - Lambert method base:      {n_min_lb} - deviation from iterative: {lb_deviation_pct}%")
             print(f"Minimum Sample Size (n) - Lambert method corrected: {n_min_lb_cc} - deviation from iterative: {lb_corrected_deviation_pct}%")
             print(f"Minimum Sample Size (n) - Lambert method adhoc :    {n_min_lb_adhoc} - deviation from iterative: {lb_adhoc_deviation_pct}%")
+            n_min_fit = find_minimum_sample_size_fit(E=args.error, alpha=args.alpha)
+            if n_min_fit is not None:
+                fit_deviation_pct = round(((n_min_fit - n_min_it) / n_min_it) * 100, 1)
+                print(f"Minimum Sample Size (n) - fitted C²/E² method:     {n_min_fit} - deviation from iterative: {fit_deviation_pct}%")
         else:
             print(f"Minimum Sample Size (n): {n_min_it}")
 
