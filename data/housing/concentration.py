@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Dynamic CR_n / Target Concentration Ratio Plotter
--------------------------------------------------
-Queries Eurostat API directly for NUTS-3 regional employment data.
+Regional Employment Concentration Plotter
+------------------------------------------
+Queries Eurostat API for NUTS-3 regional employment data and plots
+concentration metrics over time.
 
-Execution Modes:
-1. Fixed-N Mode: Pass `country` and `n` -> Calculates CR_n (%) over time.
-2. Percentage Target Mode: Pass `country` and `--percentage P` -> Finds minimal n(t)
-   required to reach P% and prints the exact NUTS-3 regions with individual % shares.
+Subcommands:
+    cr <n>          Concentration ratio: share held by top n regions.
+    target <pct>    Minimum regions needed to reach pct% of employment.
 
 Dependencies:
     pip install requests pandas matplotlib
@@ -15,16 +15,15 @@ Dependencies:
 
 import argparse
 import sys
+import tempfile
+from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
 
 def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
-    """
-    Fetches NUTS-3 employment data directly from Eurostat REST API.
-    Dataset: nama_10r_3emp (Employment by NUTS 3 regions)
-    """
+    """Fetches NUTS-3 employment data from the Eurostat REST API (nama_10r_3empers)."""
     url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/nama_10r_3empers"
 
     params = {
@@ -49,15 +48,11 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     dimensions = data['dimension']
     geo_dimension = dimensions['geo']['category']['index']
     time_dimension = dimensions['time']['category']['index']
-
     geo_labels = dimensions['geo']['category']['label']
-    time_labels = list(dimensions['time']['category']['index'].keys())
 
-    # Identify size of each dimension to calculate flat index offsets
     dim_ids = data['id']
     dim_sizes = data['size']
 
-    # Filter NUTS-3 codes matching country prefix (5 chars, e.g., PT111, ES300)
     nuts3_codes = [
         code for code in geo_dimension.keys()
         if code.startswith(cc) and len(code) == 5
@@ -67,21 +62,16 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
         print(f"[-] No NUTS-3 records found for '{cc}'. Use valid EU 2-letter codes (e.g., PT, ES, FR, DE, IT).", file=sys.stderr)
         sys.exit(1)
 
-    # Multi-dimensional array indexing setup
-    # Eurostat stores flat dictionary keys corresponding to row-major array indices
     geo_dim_idx = dim_ids.index('geo')
     time_dim_idx = dim_ids.index('time')
 
-    # Calculate strides for index conversion
     strides = [1] * len(dim_sizes)
     for i in range(len(dim_sizes) - 2, -1, -1):
         strides[i] = strides[i + 1] * dim_sizes[i + 1]
 
-    # Select default indices for remaining dimensions (e.g., unit, wstat, nace_r2)
     default_indices = {}
     for d_idx, d_name in enumerate(dim_ids):
         if d_name not in ['geo', 'time']:
-            # Pick first available category index for other dimensions
             cats = dimensions[d_name]['category']['index']
             default_indices[d_idx] = min(cats.values())
 
@@ -93,13 +83,11 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
         region_name = geo_labels.get(code, code)
 
         for time_str, time_pos in time_dimension.items():
-            # Build full coordinate array across all dimensions
             coords = {}
             coords[geo_dim_idx] = geo_pos
             coords[time_dim_idx] = time_pos
             coords.update(default_indices)
 
-            # Calculate flat position
             flat_pos = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
             flat_key = str(flat_pos)
 
@@ -115,7 +103,6 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Drop years where fewer than half the regions reported (incomplete data)
     total_regions = df['region_code'].nunique()
     regions_per_year = df.groupby('year')['region_code'].nunique()
     complete_years = regions_per_year[regions_per_year >= total_regions * 0.5].index
@@ -125,12 +112,11 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     return df[df['year'].isin(complete_years)].reset_index(drop=True)
 
 
-def calculate_cr_n_fixed(df: pd.DataFrame, n: int) -> pd.DataFrame:
-    """Mode 1: Fixed N -> Calculates concentration percentage over time."""
+def calculate_cr_n(df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Calculates CR_n concentration percentage over time."""
     results = []
-    years = sorted(df['year'].unique())
 
-    for yr in years:
+    for yr in sorted(df['year'].unique()):
         df_yr = df[df['year'] == yr].sort_values(by='employment', ascending=False).reset_index(drop=True)
         if df_yr.empty:
             continue
@@ -140,8 +126,7 @@ def calculate_cr_n_fixed(df: pd.DataFrame, n: int) -> pd.DataFrame:
             continue
 
         top_n = df_yr.head(n)
-        top_n_emp = top_n['employment'].sum()
-        cr_val = (top_n_emp / total_emp) * 100
+        cr_val = (top_n['employment'].sum() / total_emp) * 100
 
         regions_formatted = [
             f"{row['region_name']} ({row['region_code']}) - {(row['employment'] / total_emp) * 100:.2f}%"
@@ -159,15 +144,10 @@ def calculate_cr_n_fixed(df: pd.DataFrame, n: int) -> pd.DataFrame:
 
 
 def calculate_n_for_percentage(df: pd.DataFrame, target_pct: float) -> pd.DataFrame:
-    """
-    Mode 2: Target Percentage -> Finds minimum number of regions n(t) needed
-    to reach or exceed target_pct% of national employment for each year.
-    Stores exact NUTS-3 regions discovered along with individual % shares.
-    """
+    """Finds minimum number of regions needed to reach target_pct% of employment per year."""
     results = []
-    years = sorted(df['year'].unique())
 
-    for yr in years:
+    for yr in sorted(df['year'].unique()):
         df_yr = df[df['year'] == yr].sort_values(by='employment', ascending=False).reset_index(drop=True)
         if df_yr.empty:
             continue
@@ -179,7 +159,6 @@ def calculate_n_for_percentage(df: pd.DataFrame, target_pct: float) -> pd.DataFr
         df_yr['indiv_pct'] = (df_yr['employment'] / total_emp) * 100
         df_yr['cum_pct'] = df_yr['indiv_pct'].cumsum()
 
-        # Find minimum regions needed to cross target_pct
         qualifying = df_yr[df_yr['cum_pct'] >= target_pct]
         if qualifying.empty:
             n_required = len(df_yr)
@@ -191,7 +170,6 @@ def calculate_n_for_percentage(df: pd.DataFrame, target_pct: float) -> pd.DataFr
             actual_pct = df_yr.loc[first_match_idx, 'cum_pct']
             discovered_df = df_yr.head(n_required)
 
-        # Format region string with name, code, and individual percentage
         regions_list = [
             f"{row['region_name']} ({row['region_code']}) — {row['indiv_pct']:.2f}%"
             for _, row in discovered_df.iterrows()
@@ -227,7 +205,7 @@ def print_regions_for_percentage(results_df: pd.DataFrame, target_pct: float):
     print("\n" + "=" * 80 + "\n")
 
 
-def print_regions_for_fixed_n(results_df: pd.DataFrame, n: int):
+def print_regions_for_cr(results_df: pd.DataFrame, n: int):
     """Prints the top-n NUTS-3 regions by employment share."""
     print("\n" + "=" * 80)
     print(f" TOP-{n} NUTS-3 REGIONS BY EMPLOYMENT SHARE")
@@ -245,17 +223,25 @@ def print_regions_for_fixed_n(results_df: pd.DataFrame, n: int):
     print("\n" + "=" * 80 + "\n")
 
 
-def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: float, output_file: str = None):
-    """Generates time-series visualization for both fixed-N and target-percentage modes."""
+def default_output_path(country_code: str, mode: str, val) -> str:
+    cc = country_code.upper()
+    if mode == 'cr':
+        name = f"{cc}_cr{int(val)}.png"
+    else:
+        name = f"{cc}_target{int(val)}pct.png"
+    return str(Path(tempfile.gettempdir()) / name)
+
+
+def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: float, output_file: str):
+    """Generates time-series visualization."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
 
     cc = country_code.upper()
 
-    if mode == 'fixed_n':
+    if mode == 'cr':
         n = int(target_val)
-        y_vals = df['metric_val']
-        ax.plot(df['year'], y_vals, marker='o', linewidth=2.5, color='#1f77b4', label=f'CR_{n} Share (%)')
+        ax.plot(df['year'], df['metric_val'], marker='o', linewidth=2.5, color='#1f77b4', label=f'CR_{n} Share (%)')
         ax.set_title(f'Top-{n} Regional Employment Concentration Ratio ($CR_{{{n}}}$) — {cc}', fontsize=14, fontweight='bold', pad=15)
         ax.set_ylabel('Share of Total National Employment (%)', fontsize=11, labelpad=10)
 
@@ -269,8 +255,7 @@ def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: flo
         )
     else:
         pct = target_val
-        y_vals = df['metric_val']
-        ax.plot(df['year'], y_vals, marker='s', linewidth=2.5, color='#d95f02', label=f'Regions needed for {pct}% Share')
+        ax.plot(df['year'], df['metric_val'], marker='s', linewidth=2.5, color='#d95f02', label=f'Regions needed for {pct}% Share')
         ax.set_title(f'Number of Regions ($n$) Required to Reach {pct}% National Employment — {cc}', fontsize=14, fontweight='bold', pad=15)
         ax.set_ylabel('Number of Top NUTS-3 Regions ($n$)', fontsize=11, labelpad=10)
 
@@ -289,43 +274,33 @@ def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: flo
     ax.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
 
-    if output_file:
-        plt.savefig(output_file, dpi=300)
-        print(f"[+] Plot saved to: '{output_file}'")
-    else:
-        plt.show()
+    plt.savefig(output_file, dpi=300)
+    print(f"[+] Plot saved to: {output_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compute CR_n or find n(t) required to reach a target employment percentage across EU countries."
+        description="Measure NUTS-3 regional employment concentration over time."
     )
     parser.add_argument(
         "country",
         type=str,
-        help="2-letter ISO/EU country code (e.g., PT, ES, FR, DE, IT)"
+        help="2-letter EU country code (e.g., PT, ES, FR, DE, IT)"
     )
-
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "n",
-        type=int,
-        nargs="?",
-        default=None,
-        help="Fixed number of top regions (n) to compute CR_n percentage."
-    )
-    group.add_argument(
-        "-p", "--percentage",
-        type=float,
-        help="Target employment share percentage (e.g. 40 for 40%%). Finds minimal n(t) required."
-    )
-
     parser.add_argument(
         "-o", "--output",
         type=str,
         default=None,
-        help="Optional image file path to save plot (e.g., pt_40pct.png)"
+        help="Output image path (default: auto-named file in tempdir)"
     )
+
+    subparsers = parser.add_subparsers(dest="mode", required=True)
+
+    cr_parser = subparsers.add_parser("cr", help="Concentration ratio of top n regions")
+    cr_parser.add_argument("n", type=int, help="Number of top regions")
+
+    target_parser = subparsers.add_parser("target", help="Minimum regions to reach a percentage")
+    target_parser.add_argument("pct", type=float, help="Target employment share (e.g. 40 for 40%%)")
 
     args = parser.parse_args()
 
@@ -334,18 +309,17 @@ def main():
         print("[-] Error: No data retrieved.", file=sys.stderr)
         sys.exit(1)
 
-    if args.percentage is not None:
-        mode = 'pct'
-        target_val = args.percentage
-        results_df = calculate_n_for_percentage(raw_df, target_val)
-        print_regions_for_percentage(results_df, target_val)
-    else:
-        mode = 'fixed_n'
+    if args.mode == 'cr':
+        results_df = calculate_cr_n(raw_df, args.n)
+        print_regions_for_cr(results_df, args.n)
         target_val = float(args.n)
-        results_df = calculate_cr_n_fixed(raw_df, args.n)
-        print_regions_for_fixed_n(results_df, args.n)
+    else:
+        results_df = calculate_n_for_percentage(raw_df, args.pct)
+        print_regions_for_percentage(results_df, args.pct)
+        target_val = args.pct
 
-    plot_results(results_df, args.country, mode, target_val, args.output)
+    output_file = args.output or default_output_path(args.country, args.mode, target_val)
+    plot_results(results_df, args.country, args.mode, target_val, output_file)
 
 
 if __name__ == "__main__":
