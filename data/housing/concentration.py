@@ -248,12 +248,64 @@ def print_regions_for_cr(results_df: pd.DataFrame, n: int):
     print("\n" + "=" * 80 + "\n")
 
 
-def default_output_path(country_code: str, mode: str, val) -> str:
+def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float,
+                      n_required: int, output_file: str):
+    """Bar chart of regional employment shares with cumulative line for the latest year."""
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+
+    cc = country_code.upper()
+    latest_year = raw_df['year'].max()
+    df_yr = raw_df[raw_df['year'] == latest_year].sort_values(
+        by='employment', ascending=False
+    ).reset_index(drop=True)
+
+    total_emp = df_yr['employment'].sum()
+    df_yr['share'] = (df_yr['employment'] / total_emp) * 100
+    df_yr['cum_share'] = df_yr['share'].cumsum()
+
+    fig, ax1 = plt.subplots(figsize=(14, 6), dpi=300)
+
+    colors = ['#d95f02' if i < n_required else '#a0a0a0' for i in range(len(df_yr))]
+    labels = [f"{row['region_code']}" for _, row in df_yr.iterrows()]
+
+    ax1.bar(range(len(df_yr)), df_yr['share'], color=colors, edgecolor='white', linewidth=0.3)
+    ax1.set_ylabel('Employment Share (%)', fontsize=11, labelpad=10)
+    ax1.set_xlabel('NUTS-3 Regions (ranked by employment)', fontsize=11, labelpad=10)
+    ax1.set_xticks(range(len(df_yr)))
+    ax1.set_xticklabels(labels, rotation=90, fontsize=7)
+
+    ax2 = ax1.twinx()
+    ax2.plot(range(len(df_yr)), df_yr['cum_share'], color='#1f77b4',
+             linewidth=2, marker='.', markersize=4)
+    ax2.set_ylabel('Cumulative Share (%)', fontsize=11, labelpad=10, color='#1f77b4')
+    ax2.tick_params(axis='y', labelcolor='#1f77b4')
+
+    ax2.axhline(y=target_pct, color='#1f77b4', linestyle='--', linewidth=1, alpha=0.7)
+    ax2.text(len(df_yr) - 1, target_pct + 1.5, f'{target_pct}% target',
+             ha='right', fontsize=9, color='#1f77b4', fontstyle='italic')
+
+    if n_required > 0 and n_required < len(df_yr):
+        ax1.axvline(x=n_required - 0.5, color='#d95f02', linestyle='--', linewidth=1, alpha=0.7)
+        ax1.text(n_required - 0.5, ax1.get_ylim()[1] * 0.95, f' n={n_required}',
+                 fontsize=9, color='#d95f02', fontweight='bold', va='top')
+
+    ax1.set_title(
+        f'NUTS-3 Employment Distribution — {cc} ({latest_year})\n'
+        f'Top {n_required} regions (orange) reach {target_pct}% of national employment',
+        fontsize=13, fontweight='bold', pad=15
+    )
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    print(f"[+] Distribution plot saved to: {output_file}")
+
+
+def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> str:
     cc = country_code.upper()
     if mode == 'cr':
-        name = f"{cc}_cr{int(val)}.png"
+        name = f"{cc}_cr{int(val)}{suffix}.png"
     else:
-        name = f"{cc}_target{int(val)}pct.png"
+        name = f"{cc}_target{int(val)}pct{suffix}.png"
     return str(Path(tempfile.gettempdir()) / name)
 
 
@@ -360,6 +412,10 @@ def main():
 
     output_file = args.output or default_output_path(args.country, args.mode, target_val)
     plot_results(results_df, args.country, args.mode, target_val, output_file)
+
+    if args.mode == 'target':
+        dist_file = default_output_path(args.country, args.mode, target_val, suffix="_dist")
+        plot_distribution(raw_df, args.country, args.pct, n_regions, dist_file)
 
 
 if __name__ == "__main__":
