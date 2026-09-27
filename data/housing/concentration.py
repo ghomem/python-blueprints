@@ -22,6 +22,31 @@ import pandas as pd
 import requests
 
 
+def fetch_population(country_code: str, year: int) -> int | None:
+    """Fetches national population from Eurostat (demo_r_pjanaggr3)."""
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/demo_r_pjanaggr3"
+    cc = country_code.upper()
+    params = {
+        "format": "JSON",
+        "lang": "EN",
+        "sex": "T",
+        "age": "TOTAL",
+        "geo": cc,
+        "sinceTimePeriod": str(year),
+        "untilTimePeriod": str(year),
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        values = data.get('value', {})
+        if values:
+            return int(list(values.values())[0])
+    except (requests.exceptions.RequestException, ValueError, KeyError):
+        pass
+    return None
+
+
 def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     """Fetches NUTS-3 employment data from the Eurostat REST API (nama_10r_3empers)."""
     url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/nama_10r_3empers"
@@ -317,6 +342,21 @@ def main():
         results_df = calculate_n_for_percentage(raw_df, args.pct)
         print_regions_for_percentage(results_df, args.pct)
         target_val = args.pct
+
+        latest = results_df.iloc[-1]
+        n_regions = int(latest['metric_val'])
+        year = int(latest['year'])
+        total_regions = raw_df[raw_df['year'] == year]['region_code'].nunique()
+        cc = args.country.upper()
+        population = fetch_population(cc, year)
+        pct_regions = n_regions / total_regions * 100
+        summary = (f"{n_regions}/{total_regions} NUTS-3 regions required to reach {args.pct}%"
+                   f" concentration for {cc} in {year}."
+                   f" {pct_regions:.1f}% of the country's NUTS-3 regions.")
+        if population:
+            regions_per_million = n_regions / (population / 1_000_000)
+            summary += f" {regions_per_million:.2f} regions per million residents."
+        print(summary)
 
     output_file = args.output or default_output_path(args.country, args.mode, target_val)
     plot_results(results_df, args.country, args.mode, target_val, output_file)
