@@ -630,33 +630,37 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
+def _fit_log_trend(ax, x, y):
+    """Fit y = a*ln(x) + b, plot the line, return R²."""
+    mask = x > 0
+    if mask.sum() <= 2:
+        return None
+    log_x = np.log(x[mask])
+    coeffs = np.polyfit(log_x, y[mask], 1)
+    x_smooth = np.geomspace(x[mask].min(), x[mask].max(), 200)
+    y_smooth = coeffs[0] * np.log(x_smooth) + coeffs[1]
+    ax.plot(x_smooth, y_smooth, '--', color='#666666', alpha=0.5, linewidth=1.5, zorder=2)
+    ss_res = np.sum((y[mask] - (coeffs[0] * log_x + coeffs[1])) ** 2)
+    ss_tot = np.sum((y[mask] - y[mask].mean()) ** 2)
+    return 1 - ss_res / ss_tot
+
+
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
     cc = country.upper()
     ax.scatter(df['jobs_per_km2'], df['price_eur_m2'], s=60, alpha=0.7,
-               color='#d95f02', edgecolors='white', linewidth=0.5)
+               color=COUNTRY_COLORS.get(cc, '#d95f02'), edgecolors='white', linewidth=0.5)
 
     for _, row in df.iterrows():
         ax.annotate(row['name'], (row['jobs_per_km2'], row['price_eur_m2']),
                     fontsize=7, alpha=0.7, xytext=(4, 4),
                     textcoords='offset points')
 
-    # Fit and plot log trend line
-    x = df['jobs_per_km2'].values
-    y = df['price_eur_m2'].values
-    mask = x > 0
-    if mask.sum() > 2:
-        log_x = np.log(x[mask])
-        coeffs = np.polyfit(log_x, y[mask], 1)
-        x_smooth = np.linspace(x[mask].min(), x[mask].max(), 200)
-        y_smooth = coeffs[0] * np.log(x_smooth) + coeffs[1]
-        ax.plot(x_smooth, y_smooth, '--', color='#1f77b4', alpha=0.6, linewidth=1.5)
-
-        r_squared = 1 - np.sum((y[mask] - (coeffs[0] * log_x + coeffs[1])) ** 2) / \
-            np.sum((y[mask] - y[mask].mean()) ** 2)
-        ax.text(0.05, 0.95, f'$R^2 = {r_squared:.3f}$ (log fit)',
+    r2 = _fit_log_trend(ax, df['jobs_per_km2'].values, df['price_eur_m2'].values)
+    if r2 is not None:
+        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ (log fit)',
                 transform=ax.transAxes, fontsize=10, va='top',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
@@ -693,24 +697,15 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
         all_x.extend(df['jobs_per_km2'].values)
         all_y.extend(df['price_eur_m2'].values)
 
-    x = np.array(all_x)
-    y = np.array(all_y)
-    mask = x > 0
-    if mask.sum() > 2:
-        log_x = np.log(x[mask])
-        coeffs = np.polyfit(log_x, y[mask], 1)
-        x_smooth = np.linspace(x[mask].min(), x[mask].max(), 200)
-        y_smooth = coeffs[0] * np.log(x_smooth) + coeffs[1]
-        ax.plot(x_smooth, y_smooth, '--', color='#666666', alpha=0.5, linewidth=1.5, zorder=2)
-
-        r_squared = 1 - np.sum((y[mask] - (coeffs[0] * log_x + coeffs[1])) ** 2) / \
-            np.sum((y[mask] - y[mask].mean()) ** 2)
-        ax.text(0.05, 0.95, f'$R^2 = {r_squared:.3f}$ (log fit, combined)',
+    r2 = _fit_log_trend(ax, np.array(all_x), np.array(all_y))
+    if r2 is not None:
+        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ (log fit, combined)',
                 transform=ax.transAxes, fontsize=10, va='top',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
     countries_label = ' + '.join(cc for cc, _ in datasets)
-    ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
+    ax.set_xscale('log')
+    ax.set_xlabel('Employment Density (jobs / km², log scale)', fontsize=12, labelpad=10)
     ax.set_ylabel('Housing Price (€ / m²)', fontsize=12, labelpad=10)
     ax.set_title(f'Employment Density vs Housing Price — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
@@ -723,6 +718,9 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
 def main():
     year = int(sys.argv[1]) if len(sys.argv) > 1 else 2023
+
+    out_dir = Path(tempfile.gettempdir()) / "density_vs_price"
+    out_dir.mkdir(exist_ok=True)
 
     fetchers = [
         ('PT', fetch_pt_prices),
@@ -750,7 +748,7 @@ def main():
                   .sort_values('jobs_per_km2', ascending=False)
                   .to_string(index=False))
 
-            out = str(Path(tempfile.gettempdir()) / f"{country}_density_vs_price_{use_year}.png")
+            out = str(out_dir / f"{country}_density_vs_price_{use_year}.png")
             plot_scatter(df, country, use_year, out)
             combined.append((country, df))
 
@@ -761,8 +759,19 @@ def main():
 
     if len(combined) > 1:
         tag = ''.join(cc for cc, _ in combined)
-        out = str(Path(tempfile.gettempdir()) / f"{tag}_density_vs_price_{year}.png")
+        out = str(out_dir / f"{tag}_density_vs_price_{year}.png")
         plot_combined(combined, year, out)
+
+        all_df = pd.concat(
+            [df.assign(country=cc) for cc, df in combined],
+            ignore_index=True,
+        )
+        cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
+                'jobs_per_km2', 'price_eur_m2']
+        all_df = all_df[cols].sort_values(['country', 'nuts3'])
+        csv_path = out_dir / f"density_vs_price_{year}.csv"
+        all_df.to_csv(csv_path, index=False, float_format='%.2f')
+        print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
 
 
 if __name__ == "__main__":
