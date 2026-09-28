@@ -29,12 +29,12 @@ ES wages:
     returns, all workers, both sexes, all ages) at province level (≈ NUTS-3).
     Covers 46 provinces; Navarra and País Vasco (4 provinces) have their own
     tax systems and fall back to Eurostat NUTS-2 compensation data.
-    https://sede.agenciatributaria.gob.es/.../mercado/2023/
+    https://sede.agenciatributaria.gob.es/.../mercado/
 
 FR wages:
     INSEE DADS/DSN — "Salaire brut annuel moyen en EQTP" (gross annual salary,
     full-time equivalent) by département (≈ NUTS-3), all sectors, both sexes.
-    Table T401b (2022). Single year.
+    Table T401b, multi-year (2019–2022). Each year has a different publication ID.
     https://www.insee.fr/fr/statistiques/8219475
 
 NL wages:
@@ -79,10 +79,11 @@ ES housing prices (fallback):
 FR housing prices:
     DVF (Demandes de Valeurs Foncières) — actual transaction prices from notarial
     records, published as open data by DGFiP/data.gouv.fr. Pre-aggregated statistics
-    (median €/m²) available at département level (= NUTS-3 for France) from the
-    "Statistiques DVF" dataset, covering 2019–present.
+    (monthly median €/m²) available at département level (= NUTS-3 for France) from
+    the "Statistiques DVF" dataset. Monthly data aggregated to annual medians
+    weighted by number of sales. Multi-year (2021–present).
     https://www.data.gouv.fr/datasets/statistiques-dvf
-    Download: https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_whole_period.csv
+    Download: https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_dvf.csv
 
 NL housing prices:
     CBS (Centraal Bureau voor de Statistiek) dataset 85036NED — "Gemiddelde
@@ -334,73 +335,179 @@ def _fetch_pt_wages_qp() -> pd.DataFrame:
 # Mean annual salary from tax returns (IRPF), all workers, both sexes, all ages.
 # Covers all provinces except Navarra and País Vasco (own tax systems);
 # those 4 fall back to Eurostat NUTS-2.
-# https://sede.agenciatributaria.gob.es/.../mercado/2023/
+# https://sede.agenciatributaria.gob.es/.../mercado/
 # ---------------------------------------------------------------------------
 
-ES_AEAT_SALARY_2023 = {
-    'ES611': 18037, 'ES612': 20014, 'ES613': 18668, 'ES614': 19687,
-    'ES615': 17143, 'ES616': 17014, 'ES617': 20648, 'ES618': 21050,
-    'ES241': 22033, 'ES242': 21815, 'ES243': 24533,
-    'ES120': 24581,
-    'ES530': 23126,
-    'ES701': 20962, 'ES702': 20422,
-    'ES130': 22989,
-    'ES411': 20487, 'ES412': 24046, 'ES413': 22396, 'ES414': 22128,
-    'ES415': 22204, 'ES416': 21502, 'ES417': 22641, 'ES418': 24657,
-    'ES419': 20227,
-    'ES421': 20702, 'ES422': 20613, 'ES423': 19700, 'ES424': 24116,
-    'ES425': 21320,
-    'ES511': 28108, 'ES512': 22947, 'ES513': 22471, 'ES514': 23653,
-    'ES521': 20186, 'ES522': 22227, 'ES523': 23359,
-    'ES431': 18069, 'ES432': 18827,
-    'ES111': 24840, 'ES112': 21939, 'ES113': 21473, 'ES114': 22259,
-    'ES300': 30769,
-    'ES620': 20552,
-    'ES230': 22335,
+ES_AEAT_PROVINCE_TO_NUTS3 = {
+    'Almería': 'ES611', 'Cádiz': 'ES612', 'Córdoba': 'ES613',
+    'Granada': 'ES614', 'Huelva': 'ES615', 'Jaén': 'ES616',
+    'Málaga': 'ES617', 'Sevilla': 'ES618',
+    'Huesca': 'ES241', 'Teruel': 'ES242', 'Zaragoza': 'ES243',
+    'Asturias': 'ES120',
+    'Balears': 'ES530', 'Baleares': 'ES530',
+    'Las Palmas': 'ES701',
+    'Santa Cruz de Tenerife': 'ES702', 'S. C. Tenerife': 'ES702',
+    'Cantabria': 'ES130',
+    'Ávila': 'ES411', 'Burgos': 'ES412', 'León': 'ES413',
+    'Palencia': 'ES414', 'Salamanca': 'ES415', 'Segovia': 'ES416',
+    'Soria': 'ES417', 'Valladolid': 'ES418', 'Zamora': 'ES419',
+    'Albacete': 'ES421', 'Ciudad Real': 'ES422', 'Cuenca': 'ES423',
+    'Guadalajara': 'ES424', 'Toledo': 'ES425',
+    'Barcelona': 'ES511', 'Girona': 'ES512', 'Lleida': 'ES513',
+    'Tarragona': 'ES514',
+    'Alicante': 'ES521', 'Castellón': 'ES522', 'Valencia': 'ES523',
+    'Badajoz': 'ES431', 'Cáceres': 'ES432',
+    'A Coruña': 'ES111', 'Lugo': 'ES112', 'Ourense': 'ES113',
+    'Pontevedra': 'ES114',
+    'Madrid': 'ES300',
+    'Murcia': 'ES620',
+    'La Rioja': 'ES230',
+    'Ceuta': 'ES630', 'Melilla': 'ES640',
+}
+
+ES_AEAT_SALARY = {
+    2021: {
+        'ES611': 16220, 'ES612': 18086, 'ES613': 16670, 'ES614': 17671,
+        'ES615': 15296, 'ES616': 15190, 'ES617': 18112, 'ES618': 18751,
+        'ES241': 20141, 'ES242': 19745, 'ES243': 22288,
+        'ES120': 22286,
+        'ES530': 19791,
+        'ES701': 18127, 'ES702': 17697,
+        'ES130': 20893,
+        'ES411': 18574, 'ES412': 21891, 'ES413': 20358, 'ES414': 20140,
+        'ES415': 20138, 'ES416': 19566, 'ES417': 20825, 'ES418': 22319,
+        'ES419': 18270,
+        'ES421': 18798, 'ES422': 18557, 'ES423': 17893, 'ES424': 21904,
+        'ES425': 19135,
+        'ES511': 25319, 'ES512': 20691, 'ES513': 20506, 'ES514': 21387,
+        'ES521': 17649, 'ES522': 20449, 'ES523': 20860,
+        'ES431': 16195, 'ES432': 16840,
+        'ES111': 22000, 'ES112': 19823, 'ES113': 19398, 'ES114': 20046,
+        'ES300': 27981,
+        'ES620': 18696,
+        'ES230': 20341,
+        'ES630': 23545, 'ES640': 22311,
+    },
+    2022: {
+        'ES611': 17904, 'ES612': 21554, 'ES613': 19340, 'ES614': 20161,
+        'ES615': 18732, 'ES616': 17159, 'ES617': 21514, 'ES618': 22308,
+        'ES241': 23034, 'ES242': 22627, 'ES243': 26135,
+        'ES120': 26408,
+        'ES530': 23350,
+        'ES701': 21109, 'ES702': 20034,
+        'ES130': 24544,
+        'ES411': 21061, 'ES412': 26131, 'ES413': 23621, 'ES414': 23306,
+        'ES415': 23016, 'ES416': 22414, 'ES417': 23137, 'ES418': 25972,
+        'ES419': 20798,
+        'ES421': 21243, 'ES422': 21155, 'ES423': 19941, 'ES424': 25863,
+        'ES425': 22253,
+        'ES511': 29669, 'ES512': 23726, 'ES513': 22932, 'ES514': 25019,
+        'ES521': 20741, 'ES522': 24516, 'ES523': 24519,
+        'ES431': 18469, 'ES432': 19245,
+        'ES111': 25930, 'ES112': 22315, 'ES113': 21602, 'ES114': 23402,
+        'ES300': 33295,
+        'ES620': 21157,
+        'ES230': 23370,
+    },
+    2023: {
+        'ES611': 18037, 'ES612': 20014, 'ES613': 18668, 'ES614': 19687,
+        'ES615': 17143, 'ES616': 17014, 'ES617': 20648, 'ES618': 21050,
+        'ES241': 22033, 'ES242': 21815, 'ES243': 24533,
+        'ES120': 24581,
+        'ES530': 23126,
+        'ES701': 20962, 'ES702': 20422,
+        'ES130': 22989,
+        'ES411': 20487, 'ES412': 24046, 'ES413': 22396, 'ES414': 22128,
+        'ES415': 22204, 'ES416': 21502, 'ES417': 22641, 'ES418': 24657,
+        'ES419': 20227,
+        'ES421': 20702, 'ES422': 20613, 'ES423': 19700, 'ES424': 24116,
+        'ES425': 21320,
+        'ES511': 28108, 'ES512': 22947, 'ES513': 22471, 'ES514': 23653,
+        'ES521': 20186, 'ES522': 22227, 'ES523': 23359,
+        'ES431': 18069, 'ES432': 18827,
+        'ES111': 24840, 'ES112': 21939, 'ES113': 21473, 'ES114': 22259,
+        'ES300': 30769,
+        'ES620': 20552,
+        'ES230': 22335,
+    },
+    2024: {
+        'ES611': 18733, 'ES612': 20811, 'ES613': 19488, 'ES614': 20584,
+        'ES615': 18012, 'ES616': 17792, 'ES617': 21479, 'ES618': 21876,
+        'ES241': 22866, 'ES242': 22767, 'ES243': 25448,
+        'ES120': 25470,
+        'ES530': 24254,
+        'ES701': 21902, 'ES702': 21321,
+        'ES130': 23787,
+        'ES411': 21267, 'ES412': 24884, 'ES413': 23315, 'ES414': 23057,
+        'ES415': 23060, 'ES416': 22430, 'ES417': 23569, 'ES418': 25571,
+        'ES419': 20975,
+        'ES421': 21576, 'ES422': 21511, 'ES423': 20472, 'ES424': 25037,
+        'ES425': 22188,
+        'ES511': 29255, 'ES512': 24017, 'ES513': 23538, 'ES514': 24677,
+        'ES521': 20984, 'ES522': 23117, 'ES523': 24209,
+        'ES431': 18927, 'ES432': 19769,
+        'ES111': 25959, 'ES112': 22704, 'ES113': 22294, 'ES114': 23182,
+        'ES300': 31911,
+        'ES620': 21483,
+        'ES230': 23161,
+    },
 }
 
 
 # ---------------------------------------------------------------------------
 # FR wages: INSEE DADS/DSN — gross annual salary (EQTP) by département
 # Source: "Salaires dans le secteur privé et les entreprises publiques",
-# Table T401b (2022), all occupational categories, all sectors, both sexes.
+# Table T401b, all occupational categories, all sectors, both sexes.
+# Each year has a different INSEE publication ID but identical CSV format.
 # https://www.insee.fr/fr/statistiques/8219475
 # ---------------------------------------------------------------------------
 
+FR_INSEE_WAGE_PUBLICATIONS = {
+    2019: '5418716',
+    2020: '6524757',
+    2021: '7656166',
+    2022: '8219475',
+}
+
 
 def _fetch_fr_wages_insee() -> pd.DataFrame:
-    """Gross annual salary (EQTP) by département from INSEE DADS/DSN (2022)."""
-    csv_url = "https://www.insee.fr/fr/statistiques/fichier/8219475/T401b.csv"
-    csv_path = Path(tempfile.gettempdir()) / "insee_T401b.csv"
-    if not csv_path.exists():
-        resp = requests.get(csv_url, timeout=60)
-        resp.raise_for_status()
-        csv_path.write_bytes(resp.content)
-
+    """Gross annual salary (EQTP) by département from INSEE DADS/DSN (2019–2022)."""
     records = []
-    with open(csv_path, encoding='utf-8') as f:
-        reader = csvmod.DictReader(f, delimiter=';')
-        for row in reader:
-            if row['CS1'] != 'T' or row['CE'] != 'T' or row['SEXE'] != 'E':
-                continue
-            regdep = row['REGDEP']
-            if len(regdep) == 4:
-                dept = regdep[2:]
-            elif len(regdep) == 5 and regdep[0] == '0':
-                dept = regdep[2:]
-            else:
-                continue
-            nuts3 = FR_DEPT_TO_NUTS3.get(dept)
-            if not nuts3:
-                continue
-            try:
-                records.append({
-                    'nuts3': nuts3,
-                    'year': 2022,
-                    'avg_annual_wage': float(row['BRUT_EQTP']),
-                })
-            except (ValueError, TypeError):
-                continue
+    for year, pub_id in FR_INSEE_WAGE_PUBLICATIONS.items():
+        csv_url = f"https://www.insee.fr/fr/statistiques/fichier/{pub_id}/T401b.csv"
+        csv_path = Path(tempfile.gettempdir()) / f"insee_T401b_{year}.csv"
+        if not csv_path.exists():
+            resp = requests.get(csv_url, timeout=60)
+            resp.raise_for_status()
+            csv_path.write_bytes(resp.content)
+
+        with open(csv_path, encoding='utf-8') as f:
+            reader = csvmod.DictReader(f, delimiter=';')
+            for row in reader:
+                cs1 = row.get('CS1', row.get('"CS1"', '')).strip('"')
+                ce  = row.get('CE',  row.get('"CE"',  '')).strip('"')
+                sexe = row.get('SEXE', row.get('"SEXE"', '')).strip('"')
+                if cs1 != 'T' or ce != 'T' or sexe != 'E':
+                    continue
+                regdep = row.get('REGDEP', row.get('"REGDEP"', '')).strip('"')
+                if len(regdep) == 4:
+                    dept = regdep[2:]
+                elif len(regdep) == 5 and regdep[0] == '0':
+                    dept = regdep[2:]
+                else:
+                    continue
+                nuts3 = FR_DEPT_TO_NUTS3.get(dept)
+                if not nuts3:
+                    continue
+                try:
+                    brut = row.get('BRUT_EQTP', row.get('"BRUT_EQTP"', '')).strip('"')
+                    records.append({
+                        'nuts3': nuts3,
+                        'year': year,
+                        'avg_annual_wage': float(brut),
+                    })
+                except (ValueError, TypeError):
+                    continue
     return pd.DataFrame(records)
 
 
@@ -436,9 +543,12 @@ def _fetch_nl_wages_cbs() -> pd.DataFrame:
 
 
 def _fetch_es_wages_aeat() -> pd.DataFrame:
-    """Provincial mean annual salary from Agencia Tributaria (2023)."""
-    records = [{'nuts3': n, 'year': 2023, 'avg_annual_wage': float(v)}
-               for n, v in ES_AEAT_SALARY_2023.items()]
+    """Provincial mean annual salary from Agencia Tributaria (2022–2024)."""
+    records = []
+    for yr, data in ES_AEAT_SALARY.items():
+        for nuts3, wage in data.items():
+            records.append({'nuts3': nuts3, 'year': yr,
+                            'avg_annual_wage': float(wage)})
     return pd.DataFrame(records)
 
 
@@ -794,40 +904,56 @@ FR_DEPT_TO_NUTS3 = {
 
 
 def fetch_fr_prices() -> pd.DataFrame:
-    """Median €/m² from DVF transaction data, all-period aggregate by département."""
+    """Median €/m² from DVF transaction data by département, per year (2021–present)."""
     local = _load_df('FR', 'prices')
     if local is not None:
         return local
     print("[+] Fetching FR housing prices (DVF stats)...", flush=True)
-    csv_url = "https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_whole_period.csv"
-    csv_path = Path(tempfile.gettempdir()) / "dvf_stats_whole_period.csv"
+    csv_url = "https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_dvf.csv"
+    csv_path = Path(tempfile.gettempdir()) / "dvf_stats_dvf.csv"
 
     if not csv_path.exists():
-        resp = requests.get(csv_url, timeout=120)
+        print("  Downloading stats_dvf.csv (~277 MB)...", flush=True)
+        resp = requests.get(csv_url, timeout=300)
         resp.raise_for_status()
         csv_path.write_bytes(resp.content)
 
-    records = []
+    monthly = defaultdict(lambda: defaultdict(lambda: {'price_sum': 0.0, 'sales': 0}))
     with open(csv_path, encoding='utf-8') as f:
         reader = csvmod.DictReader(f)
         for row in reader:
-            if row['echelle_geo'] != 'departement':
+            if row.get('echelle_geo') != 'departement':
                 continue
-            dept_code = row['code_geo']
+            dept_code = row.get('code_geo', '')
             nuts3 = FR_DEPT_TO_NUTS3.get(dept_code)
             if not nuts3:
                 continue
-            med = row.get('med_prix_m2_whole_apt_maison')
-            if not med:
+            med = row.get('med_prix_m2_apt_maison')
+            nb  = row.get('nb_ventes_apt_maison')
+            ym  = row.get('annee_mois', '')
+            if not med or not nb or not ym or len(ym) < 4:
                 continue
             try:
-                records.append({
-                    'nuts3': nuts3,
-                    'year': 2023,
-                    'price_eur_m2': float(med),
-                })
+                year = int(ym[:4])
+                price = float(med)
+                sales = int(float(nb))
             except (ValueError, TypeError):
                 continue
+            if sales <= 0:
+                continue
+            bucket = monthly[nuts3][year]
+            bucket['price_sum'] += price * sales
+            bucket['sales'] += sales
+
+    records = []
+    for nuts3, years in monthly.items():
+        for year, bucket in years.items():
+            if bucket['sales'] > 0:
+                records.append({
+                    'nuts3': nuts3,
+                    'year': year,
+                    'price_eur_m2': bucket['price_sum'] / bucket['sales'],
+                })
 
     df = pd.DataFrame(records)
     _save_df(df, 'FR', 'prices')
@@ -979,9 +1105,9 @@ DATA_SOURCES = {
                        'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
     },
     'FR': {
-        'prices':     ('DVF — median transaction price',
-                       'https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_whole_period.csv'),
-        'wages':      ('INSEE DADS/DSN T401b — gross annual salary EQTP',
+        'prices':     ('DVF — median transaction price (monthly → annual)',
+                       'https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_dvf.csv'),
+        'wages':      ('INSEE DADS/DSN T401b — gross annual salary EQTP (2019–2022)',
                        'https://www.insee.fr/fr/statistiques/8219475'),
         'employment': ('Eurostat nama_10r_3empers',
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
