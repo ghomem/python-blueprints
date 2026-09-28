@@ -1164,10 +1164,7 @@ def main():
                 print(f"[!] {country}: year {year} not available, using {use_year}")
 
             df = build_scatter_data(country, prices_df, use_year)
-            print(f"\n[{country}] {len(df)} NUTS-3 regions matched for {use_year}:")
-            print(df[['nuts3', 'name', 'jobs_per_km2', 'price_eur_m2', 'effort_months_per_m2']]
-                  .sort_values('jobs_per_km2', ascending=False)
-                  .to_string(index=False))
+            print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
 
             out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
             plot_scatter(df, country, use_year, out, metric=metric, outliers=outliers)
