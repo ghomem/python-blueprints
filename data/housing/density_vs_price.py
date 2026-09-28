@@ -110,6 +110,39 @@ import requests
 
 
 # ---------------------------------------------------------------------------
+# Local-data helpers: save fetched DataFrames for offline use
+# ---------------------------------------------------------------------------
+
+INPUT_DIR: Path | None = None   # set by --local-data / --save-data
+SAVE_MODE: bool = False         # True when --save-data is active
+
+
+def _local_path(country: str, kind: str) -> Path:
+    """Return input/<CC>_<kind>.csv for a given country and data type."""
+    return INPUT_DIR / f"{country.upper()}_{kind}.csv"
+
+
+def _save_df(df: pd.DataFrame, country: str, kind: str) -> None:
+    if SAVE_MODE and INPUT_DIR and not df.empty:
+        path = _local_path(country, kind)
+        df.to_csv(path, index=False, float_format='%.6f')
+        print(f"  [saved] {path}")
+
+
+def _load_df(country: str, kind: str) -> pd.DataFrame | None:
+    """Load a CSV from input/ if running in local-data mode, else None."""
+    if INPUT_DIR is None or SAVE_MODE:
+        return None
+    path = _local_path(country, kind)
+    if not path.exists():
+        print(f"  [!] Local file not found: {path}", file=sys.stderr)
+        return None
+    df = pd.read_csv(path)
+    print(f"  [local] {path} ({len(df)} rows)")
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Eurostat helpers
 # ---------------------------------------------------------------------------
 
@@ -164,6 +197,9 @@ def _eurostat_flat_extract(data: dict, country: str, nuts_len: int = 5) -> list[
 
 
 def fetch_employment(country: str) -> pd.DataFrame:
+    local = _load_df(country, 'employment')
+    if local is not None:
+        return local
     print(f"[+] Fetching employment data [{country.upper()}]...", flush=True)
     data = _eurostat_json("nama_10r_3empers", unit="THS", wstatus="EMP", nace_r2="TOTAL")
     records = _eurostat_flat_extract(data, country)
@@ -172,19 +208,29 @@ def fetch_employment(country: str) -> pd.DataFrame:
     total_regions = df['nuts3'].nunique()
     per_year = df.groupby('year')['nuts3'].nunique()
     good_years = per_year[per_year >= total_regions * 0.5].index
-    return df[df['year'].isin(good_years)]
+    df = df[df['year'].isin(good_years)]
+    _save_df(df, country, 'employment')
+    return df
 
 
 def fetch_area(country: str) -> pd.DataFrame:
+    local = _load_df(country, 'area')
+    if local is not None:
+        return local
     print(f"[+] Fetching area data [{country.upper()}]...", flush=True)
     data = _eurostat_json("reg_area3", landuse="L0008")
     records = _eurostat_flat_extract(data, country)
     df = pd.DataFrame(records).rename(columns={'value': 'area_km2'})
-    return df.sort_values('year').groupby('nuts3').last().reset_index()[['nuts3', 'area_km2']]
+    df = df.sort_values('year').groupby('nuts3').last().reset_index()[['nuts3', 'area_km2']]
+    _save_df(df, country, 'area')
+    return df
 
 
 def _fetch_wages_eurostat(country: str) -> pd.DataFrame:
     """Average annual compensation per employee at NUTS-2 level (Eurostat)."""
+    local = _load_df(country, 'wages_eurostat')
+    if local is not None:
+        return local
     coe_data = _eurostat_json("nama_10r_2coe", currency="MIO_EUR", nace_r2="TOTAL")
     coe_recs = _eurostat_flat_extract(coe_data, country, nuts_len=4)
     coe_df = pd.DataFrame(coe_recs).rename(columns={'nuts3': 'nuts2', 'value': 'comp_mio'})
@@ -198,7 +244,9 @@ def _fetch_wages_eurostat(country: str) -> pd.DataFrame:
     merged = merged[(merged['comp_mio'] > 0) & (merged['emp_ths'] > 0)]
     merged['avg_annual_wage'] = (merged['comp_mio'] * 1e6) / (merged['emp_ths'] * 1e3)
 
-    return merged[['nuts2', 'year', 'avg_annual_wage']]
+    df = merged[['nuts2', 'year', 'avg_annual_wage']]
+    _save_df(df, country, 'wages_eurostat')
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -314,21 +362,28 @@ def fetch_wages(country: str) -> pd.DataFrame:
       - 'nuts2' + 'year' + 'avg_annual_wage'  (NUTS-2 fallback)
     The caller checks which column is present to decide the merge key.
     """
+    local = _load_df(country, 'wages')
+    if local is not None:
+        return local
     print(f"[+] Fetching wage data [{country.upper()}]...", flush=True)
 
     if country.upper() == 'PT':
         df = _fetch_pt_wages_qp()
         if not df.empty:
             print(f"  Using MTSS Quadros de Pessoal (NUTS-3, {len(df)} rows)")
+            _save_df(df, country, 'wages')
             return df
 
     if country.upper() == 'ES':
         df = _fetch_es_wages_aeat()
         if not df.empty:
             print(f"  Using AEAT salary data (NUTS-3, {len(df)} rows)")
+            _save_df(df, country, 'wages')
             return df
 
-    return _fetch_wages_eurostat(country)
+    df = _fetch_wages_eurostat(country)
+    _save_df(df, country, 'wages')
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +397,9 @@ def fetch_wages(country: str) -> pd.DataFrame:
 
 def fetch_pt_prices() -> pd.DataFrame:
     """Median apartment transaction price (€/m²) — actual sales, quarterly."""
+    local = _load_df('PT', 'prices')
+    if local is not None:
+        return local
     print("[+] Fetching PT transaction prices (INE 0012235)...", flush=True)
     url = "https://www.ine.pt/ine/json_indicador/pindica.jsp"
     params = {"op": "2", "varcd": "0012235", "Dim1": "T", "lang": "PT"}
@@ -387,7 +445,9 @@ def fetch_pt_prices() -> pd.DataFrame:
         return df
     # Keep Q4 for each year as the annual value (or latest quarter available)
     df = df.sort_values(['nuts3', 'year', 'quarter'])
-    return df.groupby(['nuts3', 'year']).last().reset_index()[['nuts3', 'year', 'price_eur_m2']]
+    df = df.groupby(['nuts3', 'year']).last().reset_index()[['nuts3', 'year', 'price_eur_m2']]
+    _save_df(df, 'PT', 'prices')
+    return df
 
 
 # Fallback: Indicator 0012256 — Median bank appraisal value (€/m²)
@@ -457,6 +517,9 @@ ES_INE_TO_NUTS3 = {
 
 def fetch_es_prices() -> pd.DataFrame:
     """Mean transaction price (€/m²) from property registrars."""
+    local = _load_df('ES', 'prices')
+    if local is not None:
+        return local
     print("[+] Fetching ES transaction prices (Registradores)...", flush=True)
     csv_url = ("https://opendata.registradores.org/data-integration/"
                "compraventas-residencial-trimestres-provincias-es/"
@@ -507,7 +570,9 @@ def fetch_es_prices() -> pd.DataFrame:
     if df.empty:
         return df
     df = df.sort_values(['nuts3', 'year', 'quarter'])
-    return df.groupby(['nuts3', 'year']).last().reset_index()[['nuts3', 'year', 'price_eur_m2']]
+    df = df.groupby(['nuts3', 'year']).last().reset_index()[['nuts3', 'year', 'price_eur_m2']]
+    _save_df(df, 'ES', 'prices')
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +693,9 @@ FR_DEPT_TO_NUTS3 = {
 
 def fetch_fr_prices() -> pd.DataFrame:
     """Median €/m² from DVF transaction data, all-period aggregate by département."""
+    local = _load_df('FR', 'prices')
+    if local is not None:
+        return local
     print("[+] Fetching FR housing prices (DVF stats)...", flush=True)
     csv_url = "https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_whole_period.csv"
     csv_path = Path(tempfile.gettempdir()) / "dvf_stats_whole_period.csv"
@@ -659,7 +727,9 @@ def fetch_fr_prices() -> pd.DataFrame:
             except (ValueError, TypeError):
                 continue
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    _save_df(df, 'FR', 'prices')
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +795,9 @@ def _fetch_nl_avg_floor_area(year_key: str) -> dict[str, float]:
 
 def fetch_nl_prices() -> pd.DataFrame:
     """Approximate €/m² from WOZ valuation divided by estimated average floor area."""
+    local = _load_df('NL', 'prices')
+    if local is not None:
+        return local
     print("[+] Fetching NL housing prices (CBS WOZ)...", flush=True)
 
     records = []
@@ -766,7 +839,9 @@ def fetch_nl_prices() -> pd.DataFrame:
                 'price_eur_m2': row['woz_eur'] / area,
             })
 
-    return pd.DataFrame(price_records)
+    df = pd.DataFrame(price_records)
+    _save_df(df, 'NL', 'prices')
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +1022,24 @@ def main():
     parser.add_argument('--metric', choices=['effort', 'price'], default='effort',
                         help='Y-axis metric: "effort" = months of gross salary / m² '
                              '(default), "price" = raw € / m²')
+    parser.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
+                        help='Save fetched data as CSVs into DIR (default: input/)')
+    parser.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
+                        help='Load data from local CSVs in DIR instead of fetching '
+                             '(default: input/)')
     args = parser.parse_args()
+
+    global INPUT_DIR, SAVE_MODE
+    if args.local_data:
+        INPUT_DIR = Path(args.local_data)
+        if not INPUT_DIR.is_dir():
+            parser.error(f"--local-data directory does not exist: {INPUT_DIR}")
+        print(f"[*] Using local data from {INPUT_DIR}/")
+    elif args.save_data:
+        INPUT_DIR = Path(args.save_data)
+        INPUT_DIR.mkdir(parents=True, exist_ok=True)
+        SAVE_MODE = True
+        print(f"[*] Will save fetched data to {INPUT_DIR}/")
 
     year   = args.year
     metric = args.metric
