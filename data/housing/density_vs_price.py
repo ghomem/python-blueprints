@@ -1382,8 +1382,9 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 def main():
     parser = argparse.ArgumentParser(
         description='Employment Density vs Housing metrics — NUTS-3 scatter plot')
-    parser.add_argument('year', nargs='?', type=int, default=2023,
-                        help='Reference year (default: 2023)')
+    parser.add_argument('year', type=int,
+                        help='Reference year. Complete data: 2021, 2022. '
+                             '2023 uses FR wages from 2022 (latest available).')
     parser.add_argument('--metric', choices=['effort', 'price', 'all'], default='effort',
                         help='Y-axis metric: "effort" = months of gross salary / m² '
                              '(default), "price" = raw € / m², "all" = both')
