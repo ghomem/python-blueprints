@@ -363,6 +363,199 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
     print(f"[+] Distribution plot saved to: {output_file}")
 
 
+EU27 = [
+    'AT', 'BE', 'BG', 'CY', 'CZ', 'DE', 'DK', 'EE', 'EL', 'ES',
+    'FI', 'FR', 'HR', 'HU', 'IE', 'IT', 'LT', 'LU', 'LV', 'MT',
+    'NL', 'PL', 'PT', 'RO', 'SE', 'SI', 'SK',
+]
+
+
+def _fetch_all_eurostat(dataset: str, **extra_params) -> dict:
+    """Single Eurostat API call, returns raw JSON-stat response."""
+    url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}"
+    params = {"format": "JSON", "lang": "EN"}
+    params.update(extra_params)
+    resp = requests.get(url, params=params, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _extract_all_nuts3(data: dict, year: int) -> dict[str, list[dict]]:
+    """Extract NUTS-3 employment from JSON-stat, grouped by 2-letter country code."""
+    dims = data['dimension']
+    geo_idx = dims['geo']['category']['index']
+    time_idx = dims['time']['category']['index']
+    geo_labels = dims['geo']['category']['label']
+    dim_ids = data['id']
+    dim_sizes = data['size']
+
+    if str(year) not in time_idx:
+        return {}
+    t_pos = time_idx[str(year)]
+
+    geo_dim = dim_ids.index('geo')
+    time_dim = dim_ids.index('time')
+
+    strides = [1] * len(dim_sizes)
+    for i in range(len(dim_sizes) - 2, -1, -1):
+        strides[i] = strides[i + 1] * dim_sizes[i + 1]
+
+    defaults = {}
+    for i, name in enumerate(dim_ids):
+        if name not in ('geo', 'time'):
+            defaults[i] = min(dims[name]['category']['index'].values())
+
+    values = data['value']
+    by_country: dict[str, list[dict]] = {}
+    for code, g_pos in geo_idx.items():
+        if len(code) != 5:
+            continue
+        cc = code[:2]
+        coords = {geo_dim: g_pos, time_dim: t_pos}
+        coords.update(defaults)
+        flat = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
+        val = values.get(str(flat))
+        if val is not None:
+            by_country.setdefault(cc, []).append({
+                'region_code': code,
+                'region_name': geo_labels.get(code, code),
+                'employment': float(val),
+            })
+    return by_country
+
+
+def _extract_all_area(data: dict) -> dict[str, dict[str, float]]:
+    """Extract NUTS-3 area from JSON-stat, grouped by country. Uses latest year per region."""
+    dims = data['dimension']
+    geo_idx = dims['geo']['category']['index']
+    time_idx = dims['time']['category']['index']
+    dim_ids = data['id']
+    dim_sizes = data['size']
+
+    geo_dim = dim_ids.index('geo')
+    time_dim = dim_ids.index('time')
+
+    strides = [1] * len(dim_sizes)
+    for i in range(len(dim_sizes) - 2, -1, -1):
+        strides[i] = strides[i + 1] * dim_sizes[i + 1]
+
+    defaults = {}
+    for i, name in enumerate(dim_ids):
+        if name not in ('geo', 'time'):
+            defaults[i] = min(dims[name]['category']['index'].values())
+
+    values = data['value']
+    by_country: dict[str, dict[str, float]] = {}
+    for code, g_pos in geo_idx.items():
+        if len(code) != 5:
+            continue
+        cc = code[:2]
+        for t_str, t_pos in sorted(time_idx.items()):
+            coords = {geo_dim: g_pos, time_dim: t_pos}
+            coords.update(defaults)
+            flat = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
+            val = values.get(str(flat))
+            if val is not None:
+                by_country.setdefault(cc, {})[code] = float(val)
+    return by_country
+
+
+def eu_comparison(target_pct: float, year: int, min_regions: int = 0):
+    """Compute concentration metrics for all EU-27 countries."""
+    print(f"[+] Fetching EU-wide employment data (year={year})...", flush=True)
+    emp_data = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
+                                   wstatus="EMP", nace_r2="TOTAL")
+    emp_by_cc = _extract_all_nuts3(emp_data, year)
+
+    print("[+] Fetching EU-wide area data...", flush=True)
+    area_data = _fetch_all_eurostat("reg_area3", landuse="L0008")
+    area_by_cc = _extract_all_area(area_data)
+
+    results = []
+    for cc in EU27:
+        regions = emp_by_cc.get(cc, [])
+        if len(regions) < min_regions:
+            continue
+        regions.sort(key=lambda r: r['employment'], reverse=True)
+        total_emp = sum(r['employment'] for r in regions)
+        if total_emp == 0:
+            continue
+
+        cum = 0.0
+        n_required = 0
+        for r in regions:
+            cum += r['employment']
+            n_required += 1
+            if (cum / total_emp) * 100 >= target_pct:
+                break
+
+        total_regions = len(regions)
+        area_dict = area_by_cc.get(cc, {})
+        total_area = sum(area_dict.values())
+        top_codes = [r['region_code'] for r in regions[:n_required]]
+        top_area = sum(area_dict.get(c, 0) for c in top_codes)
+        area_pct = (top_area / total_area * 100) if total_area > 0 else 0
+
+        results.append({
+            'country': cc,
+            'n_required': n_required,
+            'total_regions': total_regions,
+            'region_fraction': n_required / total_regions * 100,
+            'area_pct': area_pct,
+            'actual_pct': cum / total_emp * 100,
+        })
+
+    return pd.DataFrame(results)
+
+
+def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int):
+    """Two bar charts: region fraction and area fraction to reach target_pct%."""
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    out_dir = Path(tempfile.gettempdir()) / "concentration"
+    out_dir.mkdir(exist_ok=True)
+
+    # Plot 1: region fraction (n/M)
+    df1 = df.sort_values('region_fraction', ascending=False).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
+    bars = ax.bar(range(len(df1)), df1['region_fraction'], color='#1f77b4',
+                  edgecolor='white', linewidth=0.5)
+    ax.set_xticks(range(len(df1)))
+    ax.set_xticklabels(df1['country'], fontsize=9, fontweight='bold')
+    ax.set_ylabel('Fraction of NUTS-3 regions (%)', fontsize=11, labelpad=10)
+    ax.set_title(
+        f'Share of NUTS-3 regions needed to reach {target_pct}% of national employment ({year})',
+        fontsize=13, fontweight='bold', pad=15)
+    for i, row in df1.iterrows():
+        ax.text(i, row['region_fraction'] + 0.5,
+                f"{int(row['n_required'])}/{int(row['total_regions'])}",
+                ha='center', fontsize=7, color='#333333')
+    fig.tight_layout()
+    path1 = out_dir / f"EU_target{int(target_pct)}pct_regions_{year}.png"
+    plt.savefig(path1, dpi=300)
+    plt.close(fig)
+    print(f"[+] Region fraction plot saved to: {path1}")
+
+    # Plot 2: area fraction
+    df2 = df.sort_values('area_pct', ascending=False).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
+    ax.bar(range(len(df2)), df2['area_pct'], color='#d95f02',
+           edgecolor='white', linewidth=0.5)
+    ax.set_xticks(range(len(df2)))
+    ax.set_xticklabels(df2['country'], fontsize=9, fontweight='bold')
+    ax.set_ylabel('Country area (%)', fontsize=11, labelpad=10)
+    ax.set_title(
+        f'Share of country area covering {target_pct}% of national employment ({year})',
+        fontsize=13, fontweight='bold', pad=15)
+    for i, row in df2.iterrows():
+        ax.text(i, row['area_pct'] + 0.5, f"{row['area_pct']:.1f}%",
+                ha='center', fontsize=7, color='#333333')
+    fig.tight_layout()
+    path2 = out_dir / f"EU_target{int(target_pct)}pct_area_{year}.png"
+    plt.savefig(path2, dpi=300)
+    plt.close(fig)
+    print(f"[+] Area fraction plot saved to: {path2}")
+
+
 def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> str:
     cc = country_code.upper()
     out_dir = Path(tempfile.gettempdir()) / "concentration"
@@ -430,27 +623,41 @@ def main():
     parser = argparse.ArgumentParser(
         description="Measure NUTS-3 regional employment concentration over time."
     )
-    parser.add_argument(
-        "country",
-        type=str,
-        help="2-letter EU country code (e.g., PT, ES, FR, DE, IT)"
-    )
-    parser.add_argument(
-        "-o", "--output",
-        type=str,
-        default=None,
-        help="Output image path (default: auto-named file in tempdir)"
-    )
-
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     cr_parser = subparsers.add_parser("cr", help="Concentration ratio of top n regions")
+    cr_parser.add_argument("country", type=str, help="2-letter EU country code")
     cr_parser.add_argument("n", type=int, help="Number of top regions")
+    cr_parser.add_argument("-o", "--output", type=str, default=None)
 
     target_parser = subparsers.add_parser("target", help="Minimum regions to reach a percentage")
+    target_parser.add_argument("country", type=str, help="2-letter EU country code")
     target_parser.add_argument("pct", type=float, help="Target employment share (e.g. 40 for 40%%)")
+    target_parser.add_argument("-o", "--output", type=str, default=None)
+
+    eu_parser = subparsers.add_parser("eu", help="Compare all EU-27 countries")
+    eu_parser.add_argument("pct", type=float, help="Target employment share (e.g. 50 for 50%%)")
+    eu_parser.add_argument("--year", type=int, default=2022,
+                           help="Reference year (default: 2022)")
+    eu_parser.add_argument("--min-regions", type=int, default=5,
+                           help="Exclude countries with fewer NUTS-3 regions (default: 5)")
 
     args = parser.parse_args()
+
+    if args.mode == 'eu':
+        df = eu_comparison(args.pct, args.year, min_regions=args.min_regions)
+        if df.empty:
+            print("[-] No data for any EU country", file=sys.stderr)
+            sys.exit(1)
+        print(f"\n{'Country':>8}  {'n/M':>8}  {'% regions':>10}  {'% area':>8}")
+        print("-" * 40)
+        for _, row in df.sort_values('area_pct', ascending=False).iterrows():
+            print(f"{row['country']:>8}  "
+                  f"{int(row['n_required']):>3}/{int(row['total_regions']):<4}  "
+                  f"{row['region_fraction']:>9.1f}%  "
+                  f"{row['area_pct']:>7.1f}%")
+        plot_eu_comparison(df, args.pct, args.year)
+        return
 
     raw_df = fetch_eurostat_data(args.country)
     if raw_df.empty:
