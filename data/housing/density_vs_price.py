@@ -1293,7 +1293,8 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
 
 def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str,
-                  metric: str = 'effort', outliers: str | None = None):
+                  metric: str = 'effort', outliers: str | None = None,
+                  log_x: bool = True):
     """Combined scatter plot for multiple countries, using region names as labels."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
@@ -1365,8 +1366,10 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
     countries_label = ' + '.join(cc for cc, _ in datasets)
-    ax.set_xscale('log')
-    ax.set_xlabel('Employment Density (jobs / km², log scale)', fontsize=12, labelpad=10)
+    if log_x:
+        ax.set_xscale('log')
+    ax.set_xlabel('Employment Density (jobs / km²' + (', log scale)' if log_x else ')'),
+                  fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
     ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
@@ -1401,6 +1404,11 @@ def main():
                              help='Remove outliers from the plot and fit')
     parser.add_argument('--exclude-paris', action='store_true',
                         help='Exclude Paris (FR101) from all plots and fits')
+    parser.add_argument('--countries', metavar='CC',
+                        help='Comma-separated country codes for the combined plot '
+                             '(default: all). Example: --countries PT,ES')
+    parser.add_argument('--linear-x', action='store_true',
+                        help='Use linear x-axis on the combined plot (default: log)')
     args = parser.parse_args()
 
     global INPUT_DIR, SAVE_MODE
@@ -1423,12 +1431,19 @@ def main():
     out_dir = Path(tempfile.gettempdir()) / "density_vs_price"
     out_dir.mkdir(exist_ok=True)
 
-    fetchers = [
+    all_fetchers = [
         ('PT', fetch_pt_prices),
         ('ES', fetch_es_prices),
         ('FR', fetch_fr_prices),
         ('NL', fetch_nl_prices),
     ]
+    if args.countries:
+        selected = [c.strip().upper() for c in args.countries.split(',')]
+        fetchers = [(cc, f) for cc, f in all_fetchers if cc in selected]
+        if not fetchers:
+            parser.error(f"No valid countries in: {args.countries}")
+    else:
+        fetchers = all_fetchers
 
     # Fetch data once (shared across metrics)
     country_data = []
@@ -1475,7 +1490,8 @@ def main():
             tag = '_'.join(cc for cc, _ in combined)
             out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
             stats = plot_combined(
-                combined, year, out, metric=metric, outliers=outliers)
+                combined, year, out, metric=metric, outliers=outliers,
+                log_x=not args.linear_x)
             summary_rows.append({
                 'metric': metric, 'scope': tag, 'year': year,
                 'n_regions': stats['n_regions'],
