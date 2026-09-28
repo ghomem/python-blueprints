@@ -460,17 +460,9 @@ def _extract_all_area(data: dict) -> dict[str, dict[str, float]]:
     return by_country
 
 
-def eu_comparison(target_pct: float, year: int, min_regions: int = 0):
-    """Compute concentration metrics for all EU-27 countries."""
-    print(f"[+] Fetching EU-wide employment data (year={year})...", flush=True)
-    emp_data = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
-                                   wstatus="EMP", nace_r2="TOTAL")
-    emp_by_cc = _extract_all_nuts3(emp_data, year)
-
-    print("[+] Fetching EU-wide area data...", flush=True)
-    area_data = _fetch_all_eurostat("reg_area3", landuse="L0008")
-    area_by_cc = _extract_all_area(area_data)
-
+def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
+                           min_regions: int = 0) -> pd.DataFrame:
+    """Compute concentration metrics for all EU-27 countries from pre-fetched data."""
     results = []
     for cc in EU27:
         regions = emp_by_cc.get(cc, [])
@@ -508,27 +500,71 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0):
     return pd.DataFrame(results)
 
 
-def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int):
+def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
+                  compare_year: int | None = None):
+    """Compute concentration metrics for all EU-27 countries."""
+    years = [year]
+    if compare_year:
+        years.append(compare_year)
+
+    print(f"[+] Fetching EU-wide employment data...", flush=True)
+    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
+                                  wstatus="EMP", nace_r2="TOTAL")
+
+    print("[+] Fetching EU-wide area data...", flush=True)
+    area_data = _fetch_all_eurostat("reg_area3", landuse="L0008")
+    area_by_cc = _extract_all_area(area_data)
+
+    emp_by_year = {}
+    for yr in years:
+        emp_by_year[yr] = _extract_all_nuts3(emp_raw, yr)
+
+    df = _compute_concentration(target_pct, emp_by_year[year], area_by_cc, min_regions)
+
+    if compare_year and compare_year in emp_by_year:
+        df_cmp = _compute_concentration(target_pct, emp_by_year[compare_year],
+                                        area_by_cc, min_regions)
+        if not df_cmp.empty:
+            cmp = df_cmp.set_index('country')
+            df['region_fraction_cmp'] = df['country'].map(
+                cmp['region_fraction']).astype(float)
+            df['area_pct_cmp'] = df['country'].map(
+                cmp['area_pct']).astype(float)
+
+    return df
+
+
+def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
+                       compare_year: int | None = None):
     """Two bar charts: region fraction and area fraction to reach target_pct%."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     out_dir = Path(tempfile.gettempdir()) / "concentration"
     out_dir.mkdir(exist_ok=True)
+    has_cmp = compare_year and 'region_fraction_cmp' in df.columns
 
     # Plot 1: region fraction (n/M)
     df1 = df.sort_values('region_fraction', ascending=False).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
-    bars = ax.bar(range(len(df1)), df1['region_fraction'], color='#1f77b4',
-                  edgecolor='white', linewidth=0.5)
+    ax.bar(range(len(df1)), df1['region_fraction'], color='#1f77b4',
+           edgecolor='white', linewidth=0.5)
+    if has_cmp:
+        ax.scatter(range(len(df1)), df1['region_fraction_cmp'], color='#333333',
+                   marker='_', s=200, linewidths=2, zorder=5, label=str(compare_year))
     ax.set_xticks(range(len(df1)))
     ax.set_xticklabels(df1['country'], fontsize=9, fontweight='bold')
     ax.set_ylabel('Fraction of NUTS-3 regions (%)', fontsize=11, labelpad=10)
-    ax.set_title(
-        f'Share of NUTS-3 regions needed to reach {target_pct}% of national employment ({year})',
-        fontsize=13, fontweight='bold', pad=15)
+    title1 = f'Share of NUTS-3 regions needed to reach {target_pct}% of national employment ({year})'
+    ax.set_title(title1, fontsize=13, fontweight='bold', pad=15)
     for i, row in df1.iterrows():
-        ax.text(i, row['region_fraction'] + 0.5,
-                f"{int(row['n_required'])}/{int(row['total_regions'])}",
+        label = f"{int(row['n_required'])}/{int(row['total_regions'])}"
+        if has_cmp and pd.notna(row.get('region_fraction_cmp')):
+            delta = row['region_fraction'] - row['region_fraction_cmp']
+            sign = '+' if delta >= 0 else ''
+            label += f"\n{sign}{delta:.1f}pp"
+        ax.text(i, row['region_fraction'] + 0.5, label,
                 ha='center', fontsize=7, color='#333333')
+    if has_cmp:
+        ax.legend(fontsize=10, loc='upper right')
     fig.tight_layout()
     path1 = out_dir / f"EU_target{int(target_pct)}pct_regions_{year}.png"
     plt.savefig(path1, dpi=300)
@@ -540,20 +576,90 @@ def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int):
     fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
     ax.bar(range(len(df2)), df2['area_pct'], color='#d95f02',
            edgecolor='white', linewidth=0.5)
+    if has_cmp:
+        ax.scatter(range(len(df2)), df2['area_pct_cmp'], color='#333333',
+                   marker='_', s=200, linewidths=2, zorder=5, label=str(compare_year))
     ax.set_xticks(range(len(df2)))
     ax.set_xticklabels(df2['country'], fontsize=9, fontweight='bold')
     ax.set_ylabel('Country area (%)', fontsize=11, labelpad=10)
-    ax.set_title(
-        f'Share of country area covering {target_pct}% of national employment ({year})',
-        fontsize=13, fontweight='bold', pad=15)
+    title2 = f'Share of country area covering {target_pct}% of national employment ({year})'
+    ax.set_title(title2, fontsize=13, fontweight='bold', pad=15)
     for i, row in df2.iterrows():
-        ax.text(i, row['area_pct'] + 0.5, f"{row['area_pct']:.1f}%",
+        label = f"{row['area_pct']:.1f}%"
+        if has_cmp and pd.notna(row.get('area_pct_cmp')):
+            delta = row['area_pct'] - row['area_pct_cmp']
+            sign = '+' if delta >= 0 else ''
+            label += f"\n{sign}{delta:.1f}pp"
+        ax.text(i, row['area_pct'] + 0.5, label,
                 ha='center', fontsize=7, color='#333333')
+    if has_cmp:
+        ax.legend(fontsize=10, loc='upper right')
     fig.tight_layout()
     path2 = out_dir / f"EU_target{int(target_pct)}pct_area_{year}.png"
     plt.savefig(path2, dpi=300)
     plt.close(fig)
     print(f"[+] Area fraction plot saved to: {path2}")
+
+
+def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
+    """Dual-axis time series: nominal employment and share of national total."""
+    cc = nuts3[:2]
+    region_df = raw_df[raw_df['region_code'] == nuts3].sort_values('year')
+    if region_df.empty:
+        print(f"[-] No data for region {nuts3}", file=sys.stderr)
+        return
+
+    region_name = region_df.iloc[0]['region_name']
+    totals = raw_df.groupby('year')['employment'].sum()
+    region_df = region_df.copy()
+    region_df['share'] = region_df.apply(
+        lambda r: r['employment'] / totals[r['year']] * 100
+        if r['year'] in totals.index and totals[r['year']] > 0 else 0, axis=1)
+
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    fig, ax1 = plt.subplots(figsize=(12, 6), dpi=300)
+
+    color1 = '#1f77b4'
+    ax1.plot(region_df['year'], region_df['employment'], marker='o', linewidth=2,
+             color=color1, label='Employment (thousands)')
+    ax1.set_xlabel('Year', fontsize=11, labelpad=10)
+    ax1.set_ylabel('Employment (thousand persons)', fontsize=11, labelpad=10, color=color1)
+    ax1.tick_params(axis='y', labelcolor=color1)
+
+    color2 = '#d95f02'
+    ax2 = ax1.twinx()
+    ax2.plot(region_df['year'], region_df['share'], marker='s', linewidth=2,
+             color=color2, linestyle='--', label=f'Share of {cc} total (%)')
+    ax2.set_ylabel(f'Share of {cc} total employment (%)', fontsize=11, labelpad=10, color=color2)
+    ax2.tick_params(axis='y', labelcolor=color2)
+
+    ax1.set_title(f'Employment — {region_name} ({nuts3})',
+                  fontsize=14, fontweight='bold', pad=15)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc='upper left')
+
+    latest = region_df.iloc[-1]
+    ax1.annotate(f"{latest['employment']:.1f}k",
+                 (latest['year'], latest['employment']),
+                 textcoords="offset points", xytext=(-10, 10), ha='center',
+                 fontsize=9, fontweight='bold', color=color1)
+    ax2.annotate(f"{latest['share']:.2f}%",
+                 (latest['year'], latest['share']),
+                 textcoords="offset points", xytext=(10, -15), ha='center',
+                 fontsize=9, fontweight='bold', color=color2)
+
+    ax1.grid(True, linestyle='--', alpha=0.6)
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] Region plot saved to: {output_file}")
+
+    print(f"\n{'Year':>6}  {'Employment (k)':>15}  {'Share (%)':>10}")
+    print("-" * 35)
+    for _, r in region_df.iterrows():
+        print(f"{int(r['year']):>6}  {r['employment']:>15.1f}  {r['share']:>9.2f}%")
 
 
 def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> str:
@@ -562,6 +668,8 @@ def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> 
     out_dir.mkdir(exist_ok=True)
     if mode == 'cr':
         name = f"{cc}_cr{int(val)}{suffix}.png"
+    elif mode == 'region':
+        name = f"{cc}_region_{val}{suffix}.png"
     else:
         name = f"{cc}_target{int(val)}pct{suffix}.png"
     return str(out_dir / name)
@@ -641,22 +749,49 @@ def main():
                            help="Reference year (default: 2022)")
     eu_parser.add_argument("--min-regions", type=int, default=5,
                            help="Exclude countries with fewer NUTS-3 regions (default: 5)")
+    eu_parser.add_argument("--compare-year", type=int, default=None,
+                           help="Show trend from this year (e.g. 2012 for a 10-year diff)")
+
+    region_parser = subparsers.add_parser("region", help="Time series for a single NUTS-3 region")
+    region_parser.add_argument("nuts3", type=str, help="NUTS-3 code (e.g. PT1A0, ES300, DE600)")
+    region_parser.add_argument("-o", "--output", type=str, default=None)
 
     args = parser.parse_args()
 
     if args.mode == 'eu':
-        df = eu_comparison(args.pct, args.year, min_regions=args.min_regions)
+        df = eu_comparison(args.pct, args.year, min_regions=args.min_regions,
+                           compare_year=args.compare_year)
         if df.empty:
             print("[-] No data for any EU country", file=sys.stderr)
             sys.exit(1)
-        print(f"\n{'Country':>8}  {'n/M':>8}  {'% regions':>10}  {'% area':>8}")
-        print("-" * 40)
+        has_cmp = args.compare_year and 'area_pct_cmp' in df.columns
+        header = f"\n{'Country':>8}  {'n/M':>8}  {'% regions':>10}  {'% area':>8}"
+        if has_cmp:
+            header += f"  {'Δ regions':>10}  {'Δ area':>8}"
+        print(header)
+        print("-" * (40 + (22 if has_cmp else 0)))
         for _, row in df.sort_values('area_pct', ascending=False).iterrows():
-            print(f"{row['country']:>8}  "
-                  f"{int(row['n_required']):>3}/{int(row['total_regions']):<4}  "
-                  f"{row['region_fraction']:>9.1f}%  "
-                  f"{row['area_pct']:>7.1f}%")
-        plot_eu_comparison(df, args.pct, args.year)
+            line = (f"{row['country']:>8}  "
+                    f"{int(row['n_required']):>3}/{int(row['total_regions']):<4}  "
+                    f"{row['region_fraction']:>9.1f}%  "
+                    f"{row['area_pct']:>7.1f}%")
+            if has_cmp and pd.notna(row.get('area_pct_cmp')):
+                dr = row['region_fraction'] - row['region_fraction_cmp']
+                da = row['area_pct'] - row['area_pct_cmp']
+                line += f"  {dr:>+9.1f}pp  {da:>+7.1f}pp"
+            print(line)
+        plot_eu_comparison(df, args.pct, args.year, compare_year=args.compare_year)
+        return
+
+    if args.mode == 'region':
+        cc = args.nuts3[:2].upper()
+        raw_df = fetch_eurostat_data(cc)
+        if raw_df.empty:
+            print(f"[-] No data for country {cc}", file=sys.stderr)
+            sys.exit(1)
+        output_file = args.output or default_output_path(
+            cc, 'region', args.nuts3)
+        plot_region_timeseries(raw_df, args.nuts3, output_file)
         return
 
     raw_df = fetch_eurostat_data(args.country)
