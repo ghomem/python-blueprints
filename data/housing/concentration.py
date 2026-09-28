@@ -47,6 +47,52 @@ def fetch_population(country_code: str, year: int) -> int | None:
     return None
 
 
+def fetch_area_data(country_code: str) -> dict[str, float]:
+    """Fetches NUTS-3 land area (km²) from Eurostat reg_area3. Returns {nuts3: km²}."""
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/reg_area3"
+    cc = country_code.upper()
+    print(f"[+] Querying Eurostat API for NUTS-3 area data [{cc}]...", flush=True)
+    params = {"format": "JSON", "lang": "EN", "landuse": "L0008"}
+    try:
+        resp = requests.get(url, params=params, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        print(f"[-] Eurostat area API Error: {e}", file=sys.stderr)
+        return {}
+
+    dims = data['dimension']
+    geo_idx = dims['geo']['category']['index']
+    time_idx = dims['time']['category']['index']
+    dim_ids = data['id']
+    dim_sizes = data['size']
+
+    nuts3 = [c for c in geo_idx if c.startswith(cc) and len(c) == 5]
+    geo_dim = dim_ids.index('geo')
+    time_dim = dim_ids.index('time')
+
+    strides = [1] * len(dim_sizes)
+    for i in range(len(dim_sizes) - 2, -1, -1):
+        strides[i] = strides[i + 1] * dim_sizes[i + 1]
+
+    defaults = {}
+    for i, name in enumerate(dim_ids):
+        if name not in ('geo', 'time'):
+            defaults[i] = min(dims[name]['category']['index'].values())
+
+    values = data['value']
+    latest = {}
+    for code in nuts3:
+        for t_str, t_pos in sorted(time_idx.items()):
+            coords = {geo_dim: geo_idx[code], time_dim: t_pos}
+            coords.update(defaults)
+            flat = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
+            val = values.get(str(flat))
+            if val is not None:
+                latest[code] = float(val)
+    return latest
+
+
 def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     """Fetches NUTS-3 employment data from the Eurostat REST API (nama_10r_3empers)."""
     url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/nama_10r_3empers"
@@ -137,8 +183,10 @@ def fetch_eurostat_data(country_code: str) -> pd.DataFrame:
     return df[df['year'].isin(complete_years)].reset_index(drop=True)
 
 
-def calculate_cr_n(df: pd.DataFrame, n: int) -> pd.DataFrame:
+def calculate_cr_n(df: pd.DataFrame, n: int,
+                   area: dict[str, float] | None = None) -> pd.DataFrame:
     """Calculates CR_n concentration percentage over time."""
+    total_area = sum(area.values()) if area else 0
     results = []
 
     for yr in sorted(df['year'].unique()):
@@ -150,8 +198,12 @@ def calculate_cr_n(df: pd.DataFrame, n: int) -> pd.DataFrame:
         if total_emp == 0:
             continue
 
+        total_regions = len(df_yr)
         top_n = df_yr.head(n)
         cr_val = (top_n['employment'].sum() / total_emp) * 100
+
+        top_area = sum(area.get(c, 0) for c in top_n['region_code']) if area else 0
+        area_pct = (top_area / total_area * 100) if total_area > 0 else 0
 
         regions_formatted = [
             f"{row['region_name']} ({row['region_code']}) - {(row['employment'] / total_emp) * 100:.2f}%"
@@ -162,7 +214,9 @@ def calculate_cr_n(df: pd.DataFrame, n: int) -> pd.DataFrame:
             'year': yr,
             'metric_val': cr_val,
             'total_emp': total_emp,
-            'top_regions': regions_formatted
+            'total_regions': total_regions,
+            'area_pct': area_pct,
+            'top_regions': regions_formatted,
         })
 
     return pd.DataFrame(results)
@@ -302,11 +356,13 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
 
 def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> str:
     cc = country_code.upper()
+    out_dir = Path(tempfile.gettempdir()) / "concentration"
+    out_dir.mkdir(exist_ok=True)
     if mode == 'cr':
         name = f"{cc}_cr{int(val)}{suffix}.png"
     else:
         name = f"{cc}_target{int(val)}pct{suffix}.png"
-    return str(Path(tempfile.gettempdir()) / name)
+    return str(out_dir / name)
 
 
 def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: float, output_file: str):
@@ -319,10 +375,16 @@ def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: flo
     if mode == 'cr':
         n = int(target_val)
         ax.plot(df['year'], df['metric_val'], marker='o', linewidth=2.5, color='#1f77b4', label=f'CR_{n} Share (%)')
-        ax.set_title(f'Top-{n} Regional Employment Concentration Ratio ($CR_{{{n}}}$) — {cc}', fontsize=14, fontweight='bold', pad=15)
-        ax.set_ylabel('Share of Total National Employment (%)', fontsize=11, labelpad=10)
 
         latest = df.iloc[-1]
+        total_m = int(latest['total_regions'])
+        area_pct = latest['area_pct']
+        title = f'Top-{n} Regional Employment Concentration Ratio ($CR_{{{n}}}$) — {cc}'
+        subtitle = f'{n}/{total_m} regions, representing {area_pct:.1f}% of the country area'
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=25)
+        fig.text(0.5, 0.92, subtitle, ha='center', fontsize=11, style='italic')
+        ax.set_ylabel('Share of Total National Employment (%)', fontsize=11, labelpad=10)
+
         ax.annotate(
             f"{latest['metric_val']:.1f}%",
             (latest['year'], latest['metric_val']),
@@ -386,8 +448,10 @@ def main():
         print("[-] Error: No data retrieved.", file=sys.stderr)
         sys.exit(1)
 
+    area = fetch_area_data(args.country)
+
     if args.mode == 'cr':
-        results_df = calculate_cr_n(raw_df, args.n)
+        results_df = calculate_cr_n(raw_df, args.n, area=area)
         print_regions_for_cr(results_df, args.n)
         target_val = float(args.n)
     else:
