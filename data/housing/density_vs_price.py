@@ -957,6 +957,49 @@ COUNTRY_COLORS = {
     'NL': '#7570b3',
 }
 
+DATA_SOURCES = {
+    'PT': {
+        'prices':     ('INE PT 0012235 — median transaction price',
+                       'https://www.ine.pt/xportal/xmain?xpid=INE&xpgid=ine_indicadores&indOcorrCod=0012235'),
+        'wages':      ('MTSS Quadros de Pessoal — monthly base pay × 14',
+                       'https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx'),
+        'employment': ('Eurostat nama_10r_3empers',
+                       'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
+        'area':       ('Eurostat reg_area3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+    },
+    'ES': {
+        'prices':     ('Registradores de España — mean transaction price',
+                       'https://www.registradores.org/actualidad/portal-estadistico-registral/estadisticas-de-propiedad/evolucion-precio-medio-m2'),
+        'wages':      ('Agencia Tributaria — salario medio anual (IRPF)',
+                       'https://sede.agenciatributaria.gob.es/AEAT/Contenidos_Comunes/La_Agencia_Tributaria/Estadisticas/Publicaciones/sites/mercado/2023/'),
+        'employment': ('Eurostat nama_10r_3empers',
+                       'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
+        'area':       ('Eurostat reg_area3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+    },
+    'FR': {
+        'prices':     ('DVF — median transaction price',
+                       'https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_whole_period.csv'),
+        'wages':      ('INSEE DADS/DSN T401b — gross annual salary EQTP',
+                       'https://www.insee.fr/fr/statistiques/8219475'),
+        'employment': ('Eurostat nama_10r_3empers',
+                       'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
+        'area':       ('Eurostat reg_area3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+    },
+    'NL': {
+        'prices':     ('CBS 85036NED WOZ / 83704NED floor area',
+                       'https://opendata.cbs.nl/ODataApi/OData/85036NED'),
+        'wages':      ('CBS 85924NED — compensation per employee by COROP',
+                       'https://opendata.cbs.nl/ODataApi/OData/85924NED'),
+        'employment': ('Eurostat nama_10r_3empers',
+                       'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
+        'area':       ('Eurostat reg_area3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+    },
+}
+
 METRIC_CONFIG = {
     'effort': {
         'y_col':  'effort_months_per_m2',
@@ -1225,6 +1268,8 @@ def main():
                              help='Highlight outliers (red diamond) and exclude from fit')
     outlier_grp.add_argument('--exclude-outliers', action='store_true',
                              help='Remove outliers from the plot and fit')
+    parser.add_argument('--exclude-paris', action='store_true',
+                        help='Exclude Paris (FR101) from all plots and fits')
     args = parser.parse_args()
 
     global INPUT_DIR, SAVE_MODE
@@ -1267,6 +1312,8 @@ def main():
             if use_year != year:
                 print(f"[!] {country}: year {year} not available, using {use_year}")
             df = build_scatter_data(country, prices_df, use_year)
+            if args.exclude_paris:
+                df = df[df['nuts3'] != 'FR101'].reset_index(drop=True)
             print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
             country_data.append((country, df, use_year))
         except Exception as e:
@@ -1324,6 +1371,18 @@ def main():
         summary_path = out_dir / f"summary_{year}.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"[+] Summary saved to: {summary_path}")
+
+        countries_used = [cc for cc, _, _ in country_data]
+        source_rows = []
+        for cc in countries_used:
+            for dtype, (desc, url) in DATA_SOURCES.get(cc, {}).items():
+                source_rows.append({
+                    'country': cc, 'data_type': dtype,
+                    'source': desc, 'url': url,
+                })
+        sources_path = out_dir / "data_sources.csv"
+        pd.DataFrame(source_rows).to_csv(sources_path, index=False)
+        print(f"[+] Data sources saved to: {sources_path}")
 
 
 if __name__ == "__main__":
