@@ -922,14 +922,38 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
-def _fit_log_trend(ax, x, y):
-    """Fit y = a*ln(x) + b, plot the line, return R²."""
+def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """IQR on log-linear residuals: True for outlier points."""
+    valid = x > 0
+    outlier = np.zeros(len(x), dtype=bool)
+    if valid.sum() <= 2:
+        return outlier
+    log_x = np.log(x[valid])
+    coeffs = np.polyfit(log_x, y[valid], 1)
+    residuals = y[valid] - (coeffs[0] * log_x + coeffs[1])
+    q1, q3 = np.percentile(residuals, [25, 75])
+    iqr = q3 - q1
+    lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    outlier_valid = (residuals < lo) | (residuals > hi)
+    outlier[valid] = outlier_valid
+    return outlier
+
+
+def _fit_log_trend(ax, x, y, exclude_mask=None):
+    """Fit y = a*ln(x) + b, plot the line, return R².
+
+    If exclude_mask is given, those points are ignored for the fit and R²
+    but the trend line spans the full x-range.
+    """
     mask = x > 0
+    if exclude_mask is not None:
+        mask = mask & ~exclude_mask
     if mask.sum() <= 2:
         return None
     log_x = np.log(x[mask])
     coeffs = np.polyfit(log_x, y[mask], 1)
-    x_smooth = np.geomspace(x[mask].min(), x[mask].max(), 200)
+    x_all = x[x > 0]
+    x_smooth = np.geomspace(x_all.min(), x_all.max(), 200)
     y_smooth = coeffs[0] * np.log(x_smooth) + coeffs[1]
     ax.plot(x_smooth, y_smooth, '--', color='#666666', alpha=0.5, linewidth=1.5, zorder=2)
     ss_res = np.sum((y[mask] - (coeffs[0] * log_x + coeffs[1])) ** 2)
@@ -938,24 +962,46 @@ def _fit_log_trend(ax, x, y):
 
 
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
-                 metric: str = 'effort'):
+                 metric: str = 'effort', outliers: str | None = None):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
     mc = METRIC_CONFIG[metric]
     cc = country.upper()
     y_col = mc['y_col']
-    ax.scatter(df['jobs_per_km2'], df[y_col], s=60, alpha=0.7,
-               color=COUNTRY_COLORS.get(cc, '#d95f02'), edgecolors='white', linewidth=0.5)
+    x_vals = df['jobs_per_km2'].values
+    y_vals = df[y_col].values
+    base_color = COUNTRY_COLORS.get(cc, '#d95f02')
 
-    for _, row in df.iterrows():
+    is_outlier = _detect_outliers(x_vals, y_vals) if outliers else np.zeros(len(df), dtype=bool)
+    n_outliers = int(is_outlier.sum())
+    plot_df = df[~is_outlier].reset_index(drop=True) if outliers == 'exclude' else df
+
+    if outliers == 'highlight':
+        norm = ~is_outlier
+        ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
+                   color=base_color, edgecolors='white', linewidth=0.5)
+        if n_outliers:
+            ax.scatter(x_vals[is_outlier], y_vals[is_outlier], s=80, alpha=0.9,
+                       color=base_color, edgecolors='red', linewidth=1.5,
+                       marker='D', zorder=4)
+    else:
+        ax.scatter(plot_df['jobs_per_km2'], plot_df[y_col], s=60, alpha=0.7,
+                   color=base_color, edgecolors='white', linewidth=0.5)
+
+    for i, row in df.iterrows():
+        if outliers == 'exclude' and is_outlier[i]:
+            continue
         ax.annotate(row['name'], (row['jobs_per_km2'], row[y_col]),
                     fontsize=7, alpha=0.7, xytext=(4, 4),
                     textcoords='offset points')
 
-    r2 = _fit_log_trend(ax, df['jobs_per_km2'].values, df[y_col].values)
+    r2 = _fit_log_trend(ax, x_vals, y_vals, exclude_mask=is_outlier if outliers else None)
+    r2_label = 'log fit'
+    if outliers and n_outliers:
+        r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
     if r2 is not None:
-        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ (log fit)',
+        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, va='top',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
@@ -970,34 +1016,74 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
 
 def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str,
-                  metric: str = 'effort'):
+                  metric: str = 'effort', outliers: str | None = None):
     """Combined scatter plot for multiple countries, using region names as labels."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
 
     mc = METRIC_CONFIG[metric]
-    all_x, all_y = [], []
+    y_col = mc['y_col']
     label_size = 6 if len(datasets) <= 2 else 5
 
-    y_col = mc['y_col']
+    # Collect all points first so outlier detection is global
+    all_x, all_y, all_cc = [], [], []
+    for country, df in datasets:
+        all_x.extend(df['jobs_per_km2'].values)
+        all_y.extend(df[y_col].values)
+        all_cc.extend([country.upper()] * len(df))
+    all_x = np.array(all_x)
+    all_y = np.array(all_y)
+
+    is_outlier = _detect_outliers(all_x, all_y) if outliers else np.zeros(len(all_x), dtype=bool)
+    n_outliers = int(is_outlier.sum())
+
+    offset = 0
     for country, df in datasets:
         cc = country.upper()
         color = COUNTRY_COLORS.get(cc, '#333333')
-        ax.scatter(df['jobs_per_km2'], df[y_col], s=60, alpha=0.7,
-                   color=color, edgecolors='white', linewidth=0.5,
-                   label=cc, zorder=3)
+        n = len(df)
+        chunk_outlier = is_outlier[offset:offset + n]
 
-        for _, row in df.iterrows():
+        x_vals = df['jobs_per_km2'].values
+        y_vals = df[y_col].values
+
+        if outliers == 'highlight':
+            norm = ~chunk_outlier
+            if norm.any():
+                ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
+                           color=color, edgecolors='white', linewidth=0.5,
+                           label=cc, zorder=3)
+            if chunk_outlier.any():
+                ax.scatter(x_vals[chunk_outlier], y_vals[chunk_outlier], s=80, alpha=0.9,
+                           color=color, edgecolors='red', linewidth=1.5,
+                           marker='D', zorder=4,
+                           label=f'{cc} outlier' if not norm.any() else None)
+        elif outliers == 'exclude':
+            keep = ~chunk_outlier
+            if keep.any():
+                ax.scatter(x_vals[keep], y_vals[keep], s=60, alpha=0.7,
+                           color=color, edgecolors='white', linewidth=0.5,
+                           label=cc, zorder=3)
+        else:
+            ax.scatter(x_vals, y_vals, s=60, alpha=0.7,
+                       color=color, edgecolors='white', linewidth=0.5,
+                       label=cc, zorder=3)
+
+        for j, (_, row) in enumerate(df.iterrows()):
+            if outliers == 'exclude' and chunk_outlier[j]:
+                continue
             ax.annotate(row['name'], (row['jobs_per_km2'], row[y_col]),
                         fontsize=label_size, alpha=0.7, xytext=(4, 4),
                         textcoords='offset points', color=color)
 
-        all_x.extend(df['jobs_per_km2'].values)
-        all_y.extend(df[y_col].values)
+        offset += n
 
-    r2 = _fit_log_trend(ax, np.array(all_x), np.array(all_y))
+    r2 = _fit_log_trend(ax, all_x, all_y, exclude_mask=is_outlier if outliers else None)
+    r2_label = 'log fit, combined'
+    if outliers and n_outliers:
+        r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
     if r2 is not None:
-        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ (log fit, combined)',
+        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, va='top',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
@@ -1027,6 +1113,11 @@ def main():
     parser.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
                         help='Load data from local CSVs in DIR instead of fetching '
                              '(default: input/)')
+    outlier_grp = parser.add_mutually_exclusive_group()
+    outlier_grp.add_argument('--highlight-outliers', action='store_true',
+                             help='Highlight outliers (red diamond) and exclude from fit')
+    outlier_grp.add_argument('--exclude-outliers', action='store_true',
+                             help='Remove outliers from the plot and fit')
     args = parser.parse_args()
 
     global INPUT_DIR, SAVE_MODE
@@ -1041,8 +1132,10 @@ def main():
         SAVE_MODE = True
         print(f"[*] Will save fetched data to {INPUT_DIR}/")
 
-    year   = args.year
-    metric = args.metric
+    year     = args.year
+    metric   = args.metric
+    outliers = ('highlight' if args.highlight_outliers
+                else 'exclude' if args.exclude_outliers else None)
 
     out_dir = Path(tempfile.gettempdir()) / "density_vs_price"
     out_dir.mkdir(exist_ok=True)
@@ -1077,7 +1170,7 @@ def main():
                   .to_string(index=False))
 
             out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
-            plot_scatter(df, country, use_year, out, metric=metric)
+            plot_scatter(df, country, use_year, out, metric=metric, outliers=outliers)
             combined.append((country, df))
 
         except Exception as e:
@@ -1088,7 +1181,7 @@ def main():
     if len(combined) > 1:
         tag = ''.join(cc for cc, _ in combined)
         out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
-        plot_combined(combined, year, out, metric=metric)
+        plot_combined(combined, year, out, metric=metric, outliers=outliers)
 
         all_df = pd.concat(
             [df.assign(country=cc) for cc, df in combined],
