@@ -303,7 +303,8 @@ def print_regions_for_cr(results_df: pd.DataFrame, n: int):
 
 
 def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float,
-                      n_required: int, output_file: str):
+                      n_required: int, output_file: str,
+                      area: dict[str, float] | None = None):
     """Bar chart of regional employment shares with cumulative line for the latest year."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
 
@@ -320,7 +321,8 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
     fig, ax1 = plt.subplots(figsize=(14, 6), dpi=300)
 
     colors = ['#d95f02' if i < n_required else '#a0a0a0' for i in range(len(df_yr))]
-    labels = [f"{row['region_code']}" for _, row in df_yr.iterrows()]
+    max_label = 28
+    labels = [row['region_name'][:max_label] for _, row in df_yr.iterrows()]
 
     ax1.bar(range(len(df_yr)), df_yr['share'], color=colors, edgecolor='white', linewidth=0.3)
     ax1.set_ylabel('Employment Share (%)', fontsize=11, labelpad=10)
@@ -343,9 +345,16 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
         ax1.text(n_required - 0.5, ax1.get_ylim()[1] * 0.95, f' n={n_required}',
                  fontsize=9, color='#d95f02', fontweight='bold', va='top')
 
+    subtitle = f'Top {n_required} regions (orange) reach {target_pct}% of national employment'
+    if area:
+        total_area = sum(area.values())
+        top_codes = df_yr.head(n_required)['region_code']
+        top_area = sum(area.get(c, 0) for c in top_codes)
+        if total_area > 0:
+            subtitle += f', representing {top_area / total_area * 100:.1f}% of the country area'
+
     ax1.set_title(
-        f'NUTS-3 Employment Distribution — {cc} ({latest_year})\n'
-        f'Top {n_required} regions (orange) reach {target_pct}% of national employment',
+        f'NUTS-3 Employment Distribution — {cc} ({latest_year})\n{subtitle}',
         fontsize=13, fontweight='bold', pad=15
     )
 
@@ -479,7 +488,7 @@ def main():
 
     if args.mode == 'target':
         dist_file = default_output_path(args.country, args.mode, target_val, suffix="_dist")
-        plot_distribution(raw_df, args.country, args.pct, n_regions, dist_file)
+        plot_distribution(raw_df, args.country, args.pct, n_regions, dist_file, area=area)
 
 
 if __name__ == "__main__":
