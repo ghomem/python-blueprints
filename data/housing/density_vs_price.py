@@ -31,11 +31,24 @@ ES wages:
     tax systems and fall back to Eurostat NUTS-2 compensation data.
     https://sede.agenciatributaria.gob.es/.../mercado/2023/
 
-Wages (FR, NL — fallback):
+FR wages:
+    INSEE DADS/DSN — "Salaire brut annuel moyen en EQTP" (gross annual salary,
+    full-time equivalent) by département (≈ NUTS-3), all sectors, both sexes.
+    Table T401b (2022). Single year.
+    https://www.insee.fr/fr/statistiques/8219475
+
+NL wages:
+    CBS dataset 85924NED — "Beloning van werknemers" (compensation of employees,
+    million EUR) divided by "Werknemers" (employees, thousands) at COROP level
+    (≈ NUTS-3). Multi-year (1995–2024).
+    https://opendata.cbs.nl/ODataApi/OData/85924NED
+
+Wages (all countries — fallback):
     Eurostat dataset nama_10r_2coe — Compensation of employees at NUTS-2 level
     (million EUR, nace_r2=TOTAL), divided by employment from nama_10r_3empers
     at NUTS-2 level (thousand persons), giving average annual compensation per
     employee. NUTS-3 regions inherit the wage of their parent NUTS-2 region.
+    Used as fallback when NUTS-3 data is missing for specific regions.
     https://ec.europa.eu/eurostat/databrowser/view/nama_10r_2coe/
 
 PT housing prices (primary):
@@ -347,6 +360,81 @@ ES_AEAT_SALARY_2023 = {
 }
 
 
+# ---------------------------------------------------------------------------
+# FR wages: INSEE DADS/DSN — gross annual salary (EQTP) by département
+# Source: "Salaires dans le secteur privé et les entreprises publiques",
+# Table T401b (2022), all occupational categories, all sectors, both sexes.
+# https://www.insee.fr/fr/statistiques/8219475
+# ---------------------------------------------------------------------------
+
+
+def _fetch_fr_wages_insee() -> pd.DataFrame:
+    """Gross annual salary (EQTP) by département from INSEE DADS/DSN (2022)."""
+    csv_url = "https://www.insee.fr/fr/statistiques/fichier/8219475/T401b.csv"
+    csv_path = Path(tempfile.gettempdir()) / "insee_T401b.csv"
+    if not csv_path.exists():
+        resp = requests.get(csv_url, timeout=60)
+        resp.raise_for_status()
+        csv_path.write_bytes(resp.content)
+
+    records = []
+    with open(csv_path, encoding='utf-8') as f:
+        reader = csvmod.DictReader(f, delimiter=';')
+        for row in reader:
+            if row['CS1'] != 'T' or row['CE'] != 'T' or row['SEXE'] != 'E':
+                continue
+            regdep = row['REGDEP']
+            if len(regdep) == 4:
+                dept = regdep[2:]
+            elif len(regdep) == 5 and regdep[0] == '0':
+                dept = regdep[2:]
+            else:
+                continue
+            nuts3 = FR_DEPT_TO_NUTS3.get(dept)
+            if not nuts3:
+                continue
+            try:
+                records.append({
+                    'nuts3': nuts3,
+                    'year': 2022,
+                    'avg_annual_wage': float(row['BRUT_EQTP']),
+                })
+            except (ValueError, TypeError):
+                continue
+    return pd.DataFrame(records)
+
+
+# ---------------------------------------------------------------------------
+# NL wages: CBS 85924NED — compensation per employee by COROP region
+# BeloningVanWerknemers_6 (million EUR) / Werknemers_11 (thousand persons)
+# = average annual compensation per employee.
+# https://opendata.cbs.nl/ODataApi/OData/85924NED
+# ---------------------------------------------------------------------------
+
+
+def _fetch_nl_wages_cbs() -> pd.DataFrame:
+    """Average annual compensation per employee by COROP from CBS 85924NED."""
+    records = []
+    for year in range(2019, 2027):
+        url = ("https://opendata.cbs.nl/ODataApi/OData/85924NED/TypedDataSet?"
+               f"$filter=startswith(RegioS,'CR')%20and%20Perioden%20eq%20'{year}JJ00'")
+        data = _cbs_json(url)
+        for row in data.get('value', []):
+            regio = row.get('RegioS', '').strip()
+            comp = row.get('BeloningVanWerknemers_6')
+            emp = row.get('Werknemers_11')
+            if not regio.startswith('CR') or comp is None or emp is None or emp <= 0:
+                continue
+            nuts3 = NL_COROP_TO_NUTS3.get(regio)
+            if nuts3:
+                records.append({
+                    'nuts3': nuts3,
+                    'year': year,
+                    'avg_annual_wage': (comp * 1e6) / (emp * 1e3),
+                })
+    return pd.DataFrame(records)
+
+
 def _fetch_es_wages_aeat() -> pd.DataFrame:
     """Provincial mean annual salary from Agencia Tributaria (2023)."""
     records = [{'nuts3': n, 'year': 2023, 'avg_annual_wage': float(v)}
@@ -378,6 +466,20 @@ def fetch_wages(country: str) -> pd.DataFrame:
         df = _fetch_es_wages_aeat()
         if not df.empty:
             print(f"  Using AEAT salary data (NUTS-3, {len(df)} rows)")
+            _save_df(df, country, 'wages')
+            return df
+
+    if country.upper() == 'FR':
+        df = _fetch_fr_wages_insee()
+        if not df.empty:
+            print(f"  Using INSEE DADS/DSN (NUTS-3, {len(df)} rows)")
+            _save_df(df, country, 'wages')
+            return df
+
+    if country.upper() == 'NL':
+        df = _fetch_nl_wages_cbs()
+        if not df.empty:
+            print(f"  Using CBS 85924NED (NUTS-3, {len(df)} rows)")
             _save_df(df, country, 'wages')
             return df
 
@@ -1012,7 +1114,9 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
+    plt.close(fig)
     print(f"[+] Scatter plot saved to: {output_file}")
+    return {'r2': r2, 'n_regions': len(df), 'n_outliers': n_outliers}
 
 
 def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str,
@@ -1097,7 +1201,10 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
+    plt.close(fig)
     print(f"[+] Combined plot saved to: {output_file}")
+    n_total = sum(len(df) for _, df in datasets)
+    return {'r2': r2, 'n_regions': n_total, 'n_outliers': n_outliers}
 
 
 def main():
@@ -1105,9 +1212,9 @@ def main():
         description='Employment Density vs Housing metrics — NUTS-3 scatter plot')
     parser.add_argument('year', nargs='?', type=int, default=2023,
                         help='Reference year (default: 2023)')
-    parser.add_argument('--metric', choices=['effort', 'price'], default='effort',
+    parser.add_argument('--metric', choices=['effort', 'price', 'all'], default='effort',
                         help='Y-axis metric: "effort" = months of gross salary / m² '
-                             '(default), "price" = raw € / m²')
+                             '(default), "price" = raw € / m², "all" = both')
     parser.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
                         help='Save fetched data as CSVs into DIR (default: input/)')
     parser.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
@@ -1133,9 +1240,9 @@ def main():
         print(f"[*] Will save fetched data to {INPUT_DIR}/")
 
     year     = args.year
-    metric   = args.metric
     outliers = ('highlight' if args.highlight_outliers
                 else 'exclude' if args.exclude_outliers else None)
+    metrics  = list(METRIC_CONFIG) if args.metric == 'all' else [args.metric]
 
     out_dir = Path(tempfile.gettempdir()) / "density_vs_price"
     out_dir.mkdir(exist_ok=True)
@@ -1147,50 +1254,76 @@ def main():
         ('NL', fetch_nl_prices),
     ]
 
-    mc   = METRIC_CONFIG[metric]
-    slug = mc['slug']
-
-    combined = []
+    # Fetch data once (shared across metrics)
+    country_data = []
     for country, fetch_prices in fetchers:
         try:
             prices_df = fetch_prices()
             if prices_df.empty:
                 print(f"[-] No price data for {country}", file=sys.stderr)
                 continue
-
             available_years = sorted(prices_df['year'].unique())
             use_year = year if year in available_years else available_years[-1]
             if use_year != year:
                 print(f"[!] {country}: year {year} not available, using {use_year}")
-
             df = build_scatter_data(country, prices_df, use_year)
             print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
-
-            out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
-            plot_scatter(df, country, use_year, out, metric=metric, outliers=outliers)
-            combined.append((country, df))
-
+            country_data.append((country, df, use_year))
         except Exception as e:
             print(f"[-] {country} failed: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc()
 
-    if len(combined) > 1:
-        tag = ''.join(cc for cc, _ in combined)
-        out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
-        plot_combined(combined, year, out, metric=metric, outliers=outliers)
+    summary_rows = []
 
-        all_df = pd.concat(
-            [df.assign(country=cc) for cc, df in combined],
-            ignore_index=True,
-        )
-        cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
-                'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
-                'effort_months_per_m2']
-        all_df = all_df[cols].sort_values(['country', 'nuts3'])
-        csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
-        all_df.to_csv(csv_path, index=False, float_format='%.2f')
-        print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
+    for metric in metrics:
+        mc   = METRIC_CONFIG[metric]
+        slug = mc['slug']
+
+        combined = []
+        for country, df, use_year in country_data:
+            out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
+            stats = plot_scatter(
+                df, country, use_year, out, metric=metric, outliers=outliers)
+            combined.append((country, df))
+            summary_rows.append({
+                'metric': metric, 'scope': country, 'year': use_year,
+                'n_regions': stats['n_regions'],
+                'n_outliers': stats['n_outliers'],
+                'r2': stats['r2'],
+            })
+
+        if len(combined) > 1:
+            tag = '_'.join(cc for cc, _ in combined)
+            out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
+            stats = plot_combined(
+                combined, year, out, metric=metric, outliers=outliers)
+            summary_rows.append({
+                'metric': metric, 'scope': tag, 'year': year,
+                'n_regions': stats['n_regions'],
+                'n_outliers': stats['n_outliers'],
+                'r2': stats['r2'],
+            })
+
+            all_df = pd.concat(
+                [df.assign(country=cc) for cc, df in combined],
+                ignore_index=True,
+            )
+            cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
+                    'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
+                    'effort_months_per_m2']
+            all_df = all_df[cols].sort_values(['country', 'nuts3'])
+            csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
+            all_df.to_csv(csv_path, index=False, float_format='%.2f')
+            print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
+
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df['r2'] = summary_df['r2'].map(
+            lambda v: f'{v:.4f}' if v is not None else '')
+        summary_path = out_dir / f"summary_{year}.csv"
+        summary_df.to_csv(summary_path, index=False)
+        print(f"[+] Summary saved to: {summary_path}")
 
 
 if __name__ == "__main__":
