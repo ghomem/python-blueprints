@@ -78,11 +78,12 @@ ES housing prices (fallback):
 
 FR housing prices:
     DVF (Demandes de Valeurs Foncières) — actual transaction prices from notarial
-    records, published as open data by DGFiP/data.gouv.fr. Pre-aggregated statistics
-    (monthly median €/m²) available at département level (= NUTS-3 for France) from
-    the "Statistiques DVF" dataset. Monthly data aggregated to annual medians
-    weighted by number of sales. Multi-year (2021–present).
-    https://www.data.gouv.fr/datasets/statistiques-dvf
+    records, published as open data by DGFiP. Pre-aggregated statistics (monthly
+    median €/m²) at département level (= NUTS-3) from the "Statistiques DVF"
+    dataset, published by data.gouv.fr (DINUM/Etalab). Monthly data aggregated
+    to annual medians weighted by number of sales. Multi-year (2021–present).
+    Dataset: https://www.data.gouv.fr/fr/datasets/statistiques-dvf/
+    Pipeline: https://github.com/etalab/datagouvfr_data_pipelines/tree/main/data_processing/dvf
     Download: https://data-pipeline-open.s3.sbg.io.cloud.ovh.net/dvf/stats_dvf.csv
 
 NL housing prices:
