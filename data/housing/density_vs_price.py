@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Employment Density vs Housing Price — NUTS-3 scatter plot
----------------------------------------------------------
-Plots jobs/km² against €/m² for PT, ES, FR, and NL NUTS-3 regions.
+Employment Density vs Purchase Effort — NUTS-3 scatter plot
+------------------------------------------------------------
+Plots jobs/km² against purchase effort (months of gross salary per m²)
+for PT, ES, FR, and NL NUTS-3 regions.
 
 Data sources
 ~~~~~~~~~~~~
@@ -15,6 +16,27 @@ Area (all countries):
     Eurostat dataset reg_area3 — Area by NUTS-3 regions.
     Unit: km². Filter: landuse=L0008 (land area).
     https://ec.europa.eu/eurostat/databrowser/view/reg_area3/
+
+PT wages:
+    DGCP/MTSSS Quadros de Pessoal — "Remuneração média mensal base" (average
+    monthly base pay for full-time dependent workers), at NUTS-3 level,
+    2014–2024. Annual = monthly × 14 (12 + holiday + Christmas subsidies).
+    Continental Portugal only (Açores and Madeira excluded).
+    https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx
+
+ES wages:
+    Agencia Tributaria — "Salario Medio Anual" (mean annual salary from tax
+    returns, all workers, both sexes, all ages) at province level (≈ NUTS-3).
+    Covers 46 provinces; Navarra and País Vasco (4 provinces) have their own
+    tax systems and fall back to Eurostat NUTS-2 compensation data.
+    https://sede.agenciatributaria.gob.es/.../mercado/2023/
+
+Wages (FR, NL — fallback):
+    Eurostat dataset nama_10r_2coe — Compensation of employees at NUTS-2 level
+    (million EUR, nace_r2=TOTAL), divided by employment from nama_10r_3empers
+    at NUTS-2 level (thousand persons), giving average annual compensation per
+    employee. NUTS-3 regions inherit the wage of their parent NUTS-2 region.
+    https://ec.europa.eu/eurostat/databrowser/view/nama_10r_2coe/
 
 PT housing prices (primary):
     INE Portugal indicator 0012235 — Median apartment transaction price (€/m²).
@@ -75,6 +97,7 @@ Dependencies:
     pip install requests pandas matplotlib numpy xlrd
 """
 
+import argparse
 import csv as csvmod
 import sys
 import tempfile
@@ -98,8 +121,8 @@ def _eurostat_json(dataset: str, **params) -> dict:
     return resp.json()
 
 
-def _eurostat_flat_extract(data: dict, country: str) -> list[dict]:
-    """Extract values from Eurostat JSON-stat flat format for NUTS-3 codes."""
+def _eurostat_flat_extract(data: dict, country: str, nuts_len: int = 5) -> list[dict]:
+    """Extract values from Eurostat JSON-stat flat format for NUTS codes."""
     dims = data['dimension']
     geo_idx = dims['geo']['category']['index']
     time_idx = dims['time']['category']['index']
@@ -108,7 +131,7 @@ def _eurostat_flat_extract(data: dict, country: str) -> list[dict]:
     dim_sizes = data['size']
 
     cc = country.upper()
-    nuts3 = [c for c in geo_idx if c.startswith(cc) and len(c) == 5]
+    nuts3 = [c for c in geo_idx if c.startswith(cc) and len(c) == nuts_len]
 
     geo_dim = dim_ids.index('geo')
     time_dim = dim_ids.index('time')
@@ -158,6 +181,154 @@ def fetch_area(country: str) -> pd.DataFrame:
     records = _eurostat_flat_extract(data, country)
     df = pd.DataFrame(records).rename(columns={'value': 'area_km2'})
     return df.sort_values('year').groupby('nuts3').last().reset_index()[['nuts3', 'area_km2']]
+
+
+def _fetch_wages_eurostat(country: str) -> pd.DataFrame:
+    """Average annual compensation per employee at NUTS-2 level (Eurostat)."""
+    coe_data = _eurostat_json("nama_10r_2coe", currency="MIO_EUR", nace_r2="TOTAL")
+    coe_recs = _eurostat_flat_extract(coe_data, country, nuts_len=4)
+    coe_df = pd.DataFrame(coe_recs).rename(columns={'nuts3': 'nuts2', 'value': 'comp_mio'})
+
+    emp_data = _eurostat_json("nama_10r_3empers", unit="THS", wstatus="EMP", nace_r2="TOTAL")
+    emp_recs = _eurostat_flat_extract(emp_data, country, nuts_len=4)
+    emp_df = pd.DataFrame(emp_recs).rename(columns={'nuts3': 'nuts2', 'value': 'emp_ths'})
+
+    merged = coe_df[['nuts2', 'year', 'comp_mio']].merge(
+        emp_df[['nuts2', 'year', 'emp_ths']], on=['nuts2', 'year'])
+    merged = merged[(merged['comp_mio'] > 0) & (merged['emp_ths'] > 0)]
+    merged['avg_annual_wage'] = (merged['comp_mio'] * 1e6) / (merged['emp_ths'] * 1e3)
+
+    return merged[['nuts2', 'year', 'avg_annual_wage']]
+
+
+# ---------------------------------------------------------------------------
+# PT wages: MTSS Quadros de Pessoal — NUTS-3 monthly base pay
+# Source: DGCP/MTSSS, "Séries Quadros de Pessoal", sheet q25.
+# Monthly base pay for full-time dependent workers. Annual = monthly × 14
+# (12 months + holiday + Christmas subsidies).
+# https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx
+# ---------------------------------------------------------------------------
+
+PT_QP_NAME_TO_NUTS3 = {
+    'Alto Minho':                   'PT111',
+    'Cávado':                       'PT112',
+    'Ave':                          'PT119',
+    'Área Metropolitana do Porto':  'PT11A',
+    'Alto Tâmega e Barroso':        'PT11B',
+    'Tâmega e Sousa':               'PT11C',
+    'Douro':                        'PT11D',
+    'Terras de Trás-os-Montes':     'PT11E',
+    'Região de Aveiro':             'PT191',
+    'Região de Coimbra':            'PT192',
+    'Região de Leiria':             'PT193',
+    'Viseu Dão Lafões':             'PT194',
+    'Beira Baixa':                  'PT195',
+    'Beiras e Serra da Estrela':    'PT196',
+    'Oeste':                        'PT1D1',
+    'Médio Tejo':                   'PT1D2',
+    'Lezíria do Tejo':              'PT1D3',
+    'Grande Lisboa':                'PT1A0',
+    'Península de Setúbal':         'PT1B0',
+    'Alentejo Litoral':             'PT1C1',
+    'Baixo Alentejo':               'PT1C2',
+    'Alto Alentejo':                'PT1C3',
+    'Alentejo Central':             'PT1C4',
+    'Algarve':                      'PT150',
+}
+
+
+def _fetch_pt_wages_qp() -> pd.DataFrame:
+    """NUTS-3 monthly base pay from MTSS Quadros de Pessoal (continental PT)."""
+    xls_url = ("https://www.dgcp.mtsss.gov.pt/documents/10182/10928/"
+               "seriesqp_2014_2024.xlsx/d0805880-6aef-4eb1-8602-56c1b8a989a1")
+    xls_path = Path(tempfile.gettempdir()) / "seriesqp_2014_2024.xlsx"
+
+    if not xls_path.exists():
+        resp = requests.get(xls_url, timeout=60, verify=False)
+        resp.raise_for_status()
+        xls_path.write_bytes(resp.content)
+
+    df = pd.read_excel(xls_path, sheet_name='q25', header=None)
+    years = [int(df.iloc[3, c]) for c in range(1, df.shape[1]) if pd.notna(df.iloc[3, c])]
+
+    records = []
+    for i in range(4, len(df)):
+        name = str(df.iloc[i, 0]).strip() if pd.notna(df.iloc[i, 0]) else ''
+        nuts3 = PT_QP_NAME_TO_NUTS3.get(name)
+        if not nuts3:
+            continue
+        for j, year in enumerate(years):
+            val = df.iloc[i, j + 1]
+            if pd.notna(val):
+                records.append({
+                    'nuts3': nuts3,
+                    'year': year,
+                    'avg_annual_wage': float(val) * 14,
+                })
+    return pd.DataFrame(records)
+
+
+# ---------------------------------------------------------------------------
+# ES wages: Agencia Tributaria — "Salario Medio Anual" by province
+# Mean annual salary from tax returns (IRPF), all workers, both sexes, all ages.
+# Covers all provinces except Navarra and País Vasco (own tax systems);
+# those 4 fall back to Eurostat NUTS-2.
+# https://sede.agenciatributaria.gob.es/.../mercado/2023/
+# ---------------------------------------------------------------------------
+
+ES_AEAT_SALARY_2023 = {
+    'ES611': 18037, 'ES612': 20014, 'ES613': 18668, 'ES614': 19687,
+    'ES615': 17143, 'ES616': 17014, 'ES617': 20648, 'ES618': 21050,
+    'ES241': 22033, 'ES242': 21815, 'ES243': 24533,
+    'ES120': 24581,
+    'ES530': 23126,
+    'ES701': 20962, 'ES702': 20422,
+    'ES130': 22989,
+    'ES411': 20487, 'ES412': 24046, 'ES413': 22396, 'ES414': 22128,
+    'ES415': 22204, 'ES416': 21502, 'ES417': 22641, 'ES418': 24657,
+    'ES419': 20227,
+    'ES421': 20702, 'ES422': 20613, 'ES423': 19700, 'ES424': 24116,
+    'ES425': 21320,
+    'ES511': 28108, 'ES512': 22947, 'ES513': 22471, 'ES514': 23653,
+    'ES521': 20186, 'ES522': 22227, 'ES523': 23359,
+    'ES431': 18069, 'ES432': 18827,
+    'ES111': 24840, 'ES112': 21939, 'ES113': 21473, 'ES114': 22259,
+    'ES300': 30769,
+    'ES620': 20552,
+    'ES230': 22335,
+}
+
+
+def _fetch_es_wages_aeat() -> pd.DataFrame:
+    """Provincial mean annual salary from Agencia Tributaria (2023)."""
+    records = [{'nuts3': n, 'year': 2023, 'avg_annual_wage': float(v)}
+               for n, v in ES_AEAT_SALARY_2023.items()]
+    return pd.DataFrame(records)
+
+
+def fetch_wages(country: str) -> pd.DataFrame:
+    """Fetch wage data — NUTS-3 where available, NUTS-2 otherwise.
+
+    Returns a DataFrame with columns:
+      - 'nuts3' + 'year' + 'avg_annual_wage'  (NUTS-3 granularity), OR
+      - 'nuts2' + 'year' + 'avg_annual_wage'  (NUTS-2 fallback)
+    The caller checks which column is present to decide the merge key.
+    """
+    print(f"[+] Fetching wage data [{country.upper()}]...", flush=True)
+
+    if country.upper() == 'PT':
+        df = _fetch_pt_wages_qp()
+        if not df.empty:
+            print(f"  Using MTSS Quadros de Pessoal (NUTS-3, {len(df)} rows)")
+            return df
+
+    if country.upper() == 'ES':
+        df = _fetch_es_wages_aeat()
+        if not df.empty:
+            print(f"  Using AEAT salary data (NUTS-3, {len(df)} rows)")
+            return df
+
+    return _fetch_wages_eurostat(country)
 
 
 # ---------------------------------------------------------------------------
@@ -609,10 +780,26 @@ COUNTRY_COLORS = {
     'NL': '#7570b3',
 }
 
+METRIC_CONFIG = {
+    'effort': {
+        'y_col':  'effort_months_per_m2',
+        'ylabel': 'Purchase Effort (months of gross salary / m²)',
+        'title':  'Purchase Effort',
+        'slug':   'effort',
+    },
+    'price': {
+        'y_col':  'price_eur_m2',
+        'ylabel': 'Price (€ / m²)',
+        'title':  'Housing Price',
+        'slug':   'price',
+    },
+}
+
 
 def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.DataFrame:
     emp_df = fetch_employment(country)
     area_df = fetch_area(country)
+    wages_df = fetch_wages(country)
 
     emp_yr = emp_df[emp_df['year'] == year][['nuts3', 'name', 'employment_ths']]
     prices_yr = prices_df[prices_df['year'] == year][['nuts3', 'price_eur_m2']]
@@ -620,12 +807,42 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     merged = emp_yr.merge(area_df, on='nuts3').merge(prices_yr, on='nuts3')
     merged['jobs_per_km2'] = (merged['employment_ths'] * 1000) / merged['area_km2']
 
+    nuts3_wages = 'nuts3' in wages_df.columns
+    wage_key = 'nuts3' if nuts3_wages else 'nuts2'
+    if not nuts3_wages:
+        merged['nuts2'] = merged['nuts3'].str[:4]
+    wages_yr = wages_df[wages_df['year'] == year][[wage_key, 'avg_annual_wage']]
+    if wages_yr.empty:
+        closest = wages_df['year'].max()
+        wages_yr = wages_df[wages_df['year'] == closest][[wage_key, 'avg_annual_wage']]
+        if not wages_yr.empty:
+            print(f"  [!] Wage data: using {closest} (no {year})")
+    merged = merged.merge(wages_yr, on=wage_key, how='left')
+
+    missing = merged['avg_annual_wage'].isna().sum()
+    if missing > 0 and nuts3_wages:
+        merged['nuts2'] = merged['nuts3'].str[:4]
+        fallback = _fetch_wages_eurostat(country)
+        fb_yr = fallback[fallback['year'] == year][['nuts2', 'avg_annual_wage']]
+        if fb_yr.empty:
+            fb_yr = fallback[fallback['year'] == fallback['year'].max()][['nuts2', 'avg_annual_wage']]
+        fb_map = fb_yr.set_index('nuts2')['avg_annual_wage']
+        mask = merged['avg_annual_wage'].isna()
+        merged.loc[mask, 'avg_annual_wage'] = merged.loc[mask, 'nuts2'].map(fb_map)
+        filled = missing - merged['avg_annual_wage'].isna().sum()
+        if filled > 0:
+            print(f"  [!] {filled} regions filled from Eurostat NUTS-2 fallback")
+
+    merged['monthly_wage'] = merged['avg_annual_wage'] / 12
+    merged['effort_months_per_m2'] = merged['price_eur_m2'] / merged['monthly_wage']
+
     exclude = {
-        'ES630', 'ES640',                                     # Ceuta, Melilla
-        'FRY10', 'FRY20', 'FRY30', 'FRY40', 'FRY50', 'FRZZZ',  # FR overseas + extra-regio
-        'NLZZZ',                                               # NL extra-regio
+        'ES630', 'ES640',
+        'FRY10', 'FRY20', 'FRY30', 'FRY40', 'FRY50', 'FRZZZ',
+        'NLZZZ',
     }
     merged = merged[~merged['nuts3'].isin(exclude)]
+    merged = merged.dropna(subset=['effort_months_per_m2'])
 
     return merged
 
@@ -645,28 +862,31 @@ def _fit_log_trend(ax, x, y):
     return 1 - ss_res / ss_tot
 
 
-def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str):
+def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
+                 metric: str = 'effort'):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
+    mc = METRIC_CONFIG[metric]
     cc = country.upper()
-    ax.scatter(df['jobs_per_km2'], df['price_eur_m2'], s=60, alpha=0.7,
+    y_col = mc['y_col']
+    ax.scatter(df['jobs_per_km2'], df[y_col], s=60, alpha=0.7,
                color=COUNTRY_COLORS.get(cc, '#d95f02'), edgecolors='white', linewidth=0.5)
 
     for _, row in df.iterrows():
-        ax.annotate(row['name'], (row['jobs_per_km2'], row['price_eur_m2']),
+        ax.annotate(row['name'], (row['jobs_per_km2'], row[y_col]),
                     fontsize=7, alpha=0.7, xytext=(4, 4),
                     textcoords='offset points')
 
-    r2 = _fit_log_trend(ax, df['jobs_per_km2'].values, df['price_eur_m2'].values)
+    r2 = _fit_log_trend(ax, df['jobs_per_km2'].values, df[y_col].values)
     if r2 is not None:
         ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ (log fit)',
                 transform=ax.transAxes, fontsize=10, va='top',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
     ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
-    ax.set_ylabel('Housing Price (€ / m²)', fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs Housing Price — {cc} NUTS-3 ({year})',
+    ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
+    ax.set_title(f'Employment Density vs {mc["title"]} — {cc} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
 
     fig.tight_layout()
@@ -674,28 +894,31 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str):
     print(f"[+] Scatter plot saved to: {output_file}")
 
 
-def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str):
+def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str,
+                  metric: str = 'effort'):
     """Combined scatter plot for multiple countries, using region names as labels."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
 
+    mc = METRIC_CONFIG[metric]
     all_x, all_y = [], []
     label_size = 6 if len(datasets) <= 2 else 5
 
+    y_col = mc['y_col']
     for country, df in datasets:
         cc = country.upper()
         color = COUNTRY_COLORS.get(cc, '#333333')
-        ax.scatter(df['jobs_per_km2'], df['price_eur_m2'], s=60, alpha=0.7,
+        ax.scatter(df['jobs_per_km2'], df[y_col], s=60, alpha=0.7,
                    color=color, edgecolors='white', linewidth=0.5,
                    label=cc, zorder=3)
 
         for _, row in df.iterrows():
-            ax.annotate(row['name'], (row['jobs_per_km2'], row['price_eur_m2']),
+            ax.annotate(row['name'], (row['jobs_per_km2'], row[y_col]),
                         fontsize=label_size, alpha=0.7, xytext=(4, 4),
                         textcoords='offset points', color=color)
 
         all_x.extend(df['jobs_per_km2'].values)
-        all_y.extend(df['price_eur_m2'].values)
+        all_y.extend(df[y_col].values)
 
     r2 = _fit_log_trend(ax, np.array(all_x), np.array(all_y))
     if r2 is not None:
@@ -706,8 +929,8 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     countries_label = ' + '.join(cc for cc, _ in datasets)
     ax.set_xscale('log')
     ax.set_xlabel('Employment Density (jobs / km², log scale)', fontsize=12, labelpad=10)
-    ax.set_ylabel('Housing Price (€ / m²)', fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs Housing Price — {countries_label} NUTS-3 ({year})',
+    ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
+    ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
     ax.legend(fontsize=11, loc='lower right')
 
@@ -717,7 +940,17 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
 
 def main():
-    year = int(sys.argv[1]) if len(sys.argv) > 1 else 2023
+    parser = argparse.ArgumentParser(
+        description='Employment Density vs Housing metrics — NUTS-3 scatter plot')
+    parser.add_argument('year', nargs='?', type=int, default=2023,
+                        help='Reference year (default: 2023)')
+    parser.add_argument('--metric', choices=['effort', 'price'], default='effort',
+                        help='Y-axis metric: "effort" = months of gross salary / m² '
+                             '(default), "price" = raw € / m²')
+    args = parser.parse_args()
+
+    year   = args.year
+    metric = args.metric
 
     out_dir = Path(tempfile.gettempdir()) / "density_vs_price"
     out_dir.mkdir(exist_ok=True)
@@ -728,6 +961,9 @@ def main():
         ('FR', fetch_fr_prices),
         ('NL', fetch_nl_prices),
     ]
+
+    mc   = METRIC_CONFIG[metric]
+    slug = mc['slug']
 
     combined = []
     for country, fetch_prices in fetchers:
@@ -744,12 +980,12 @@ def main():
 
             df = build_scatter_data(country, prices_df, use_year)
             print(f"\n[{country}] {len(df)} NUTS-3 regions matched for {use_year}:")
-            print(df[['nuts3', 'name', 'jobs_per_km2', 'price_eur_m2']]
+            print(df[['nuts3', 'name', 'jobs_per_km2', 'price_eur_m2', 'effort_months_per_m2']]
                   .sort_values('jobs_per_km2', ascending=False)
                   .to_string(index=False))
 
-            out = str(out_dir / f"{country}_density_vs_price_{use_year}.png")
-            plot_scatter(df, country, use_year, out)
+            out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
+            plot_scatter(df, country, use_year, out, metric=metric)
             combined.append((country, df))
 
         except Exception as e:
@@ -759,17 +995,18 @@ def main():
 
     if len(combined) > 1:
         tag = ''.join(cc for cc, _ in combined)
-        out = str(out_dir / f"{tag}_density_vs_price_{year}.png")
-        plot_combined(combined, year, out)
+        out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
+        plot_combined(combined, year, out, metric=metric)
 
         all_df = pd.concat(
             [df.assign(country=cc) for cc, df in combined],
             ignore_index=True,
         )
         cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
-                'jobs_per_km2', 'price_eur_m2']
+                'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
+                'effort_months_per_m2']
         all_df = all_df[cols].sort_values(['country', 'nuts3'])
-        csv_path = out_dir / f"density_vs_price_{year}.csv"
+        csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
         all_df.to_csv(csv_path, index=False, float_format='%.2f')
         print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
 
