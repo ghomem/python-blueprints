@@ -1375,19 +1375,15 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
     if tourism and 'nights_per_worker' in plot_df.columns:
         npw = plot_df['nights_per_worker'].fillna(0).values
         colors = _tourism_colors(base_color, npw, tourism_norm)
-        ax.scatter(plot_df['jobs_per_km2'], plot_df[y_col], s=70, alpha=0.85,
-                   c=colors, edgecolors=base_color, linewidth=1.0)
-    elif outliers == 'highlight':
-        norm = ~is_outlier
-        ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
-                   color=base_color, edgecolors='white', linewidth=0.5)
-        if n_outliers:
-            ax.scatter(x_vals[is_outlier], y_vals[is_outlier], s=80, alpha=0.9,
-                       color=base_color, edgecolors='red', linewidth=1.5,
-                       marker='D', zorder=4)
+        ax.scatter(plot_df['jobs_per_km2'], plot_df[y_col], s=60, alpha=0.7,
+                   c=colors, edgecolors=base_color, linewidth=0.5)
     else:
         ax.scatter(plot_df['jobs_per_km2'], plot_df[y_col], s=60, alpha=0.7,
                    color=base_color, edgecolors='white', linewidth=0.5)
+
+    if outliers == 'highlight' and n_outliers:
+        ax.scatter(x_vals[is_outlier], y_vals[is_outlier], s=60,
+                   facecolors='none', edgecolors='red', linewidth=1.5, zorder=4)
 
     for i, row in df.iterrows():
         if outliers == 'exclude' and is_outlier[i]:
@@ -1461,33 +1457,27 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
         x_vals = df['jobs_per_km2'].values
         y_vals = df[y_col].values
 
-        if tourism and 'nights_per_worker' in df.columns:
-            npw = df['nights_per_worker'].fillna(0).values
-            colors = _tourism_colors(color, npw, tourism_norm)
-            ax.scatter(x_vals, y_vals, s=70, alpha=0.85,
-                       c=colors, edgecolors=color, linewidth=1.0,
-                       label=cc, zorder=3)
-        elif outliers == 'highlight':
-            norm = ~chunk_outlier
-            if norm.any():
-                ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
-                           color=color, edgecolors='white', linewidth=0.5,
-                           label=cc, zorder=3)
-            if chunk_outlier.any():
-                ax.scatter(x_vals[chunk_outlier], y_vals[chunk_outlier], s=80, alpha=0.9,
-                           color=color, edgecolors='red', linewidth=1.5,
-                           marker='D', zorder=4,
-                           label=f'{cc} outlier' if not norm.any() else None)
-        elif outliers == 'exclude':
+        if outliers == 'exclude':
             keep = ~chunk_outlier
-            if keep.any():
-                ax.scatter(x_vals[keep], y_vals[keep], s=60, alpha=0.7,
-                           color=color, edgecolors='white', linewidth=0.5,
-                           label=cc, zorder=3)
+            plot_x, plot_y = x_vals[keep], y_vals[keep]
         else:
-            ax.scatter(x_vals, y_vals, s=60, alpha=0.7,
+            keep = np.ones(n, dtype=bool)
+            plot_x, plot_y = x_vals, y_vals
+
+        if tourism and 'nights_per_worker' in df.columns:
+            npw = df['nights_per_worker'].fillna(0).values[keep]
+            colors = _tourism_colors(color, npw, tourism_norm)
+            ax.scatter(plot_x, plot_y, s=60, alpha=0.7,
+                       c=colors, edgecolors=color, linewidth=0.5,
+                       label=cc, zorder=3)
+        else:
+            ax.scatter(plot_x, plot_y, s=60, alpha=0.7,
                        color=color, edgecolors='white', linewidth=0.5,
                        label=cc, zorder=3)
+
+        if outliers == 'highlight' and chunk_outlier.any():
+            ax.scatter(x_vals[chunk_outlier], y_vals[chunk_outlier], s=60,
+                       facecolors='none', edgecolors='red', linewidth=1.5, zorder=4)
 
         for j, (_, row) in enumerate(df.iterrows()):
             if outliers == 'exclude' and chunk_outlier[j]:
