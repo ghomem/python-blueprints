@@ -1383,7 +1383,7 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
     if outliers == 'highlight' and n_outliers:
         ax.scatter(x_vals[is_outlier], y_vals[is_outlier], s=60,
-                   facecolors='none', edgecolors='red', linewidth=1.5, zorder=4)
+                   facecolors='none', edgecolors='red', linewidth=0.5, zorder=4)
 
     for i, row in df.iterrows():
         if outliers == 'exclude' and is_outlier[i]:
@@ -1477,7 +1477,7 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
         if outliers == 'highlight' and chunk_outlier.any():
             ax.scatter(x_vals[chunk_outlier], y_vals[chunk_outlier], s=60,
-                       facecolors='none', edgecolors='red', linewidth=1.5, zorder=4)
+                       facecolors='none', edgecolors='red', linewidth=0.5, zorder=4)
 
         for j, (_, row) in enumerate(df.iterrows()):
             if outliers == 'exclude' and chunk_outlier[j]:
