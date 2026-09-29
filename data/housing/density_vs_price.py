@@ -17,12 +17,17 @@ Area (all countries):
     Unit: km². Filter: landuse=L0008 (land area).
     https://ec.europa.eu/eurostat/databrowser/view/reg_area3/
 
-PT wages:
+PT wages (continental):
     DGCP/MTSSS Quadros de Pessoal — "Remuneração média mensal base" (average
     monthly base pay for full-time dependent workers), at NUTS-3 level,
     2014–2024. Annual = monthly × 14 (12 + holiday + Christmas subsidies).
-    Continental Portugal only (Açores and Madeira excluded).
     https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx
+
+PT wages (Madeira):
+    DREM Quadros de Pessoal — "Ganho médio mensal" (mean monthly earnings),
+    converted to base-pay-equivalent using the mainland ganho/base ratio
+    (~1.20, from MTSSS q37/q25). Annual = converted monthly × 14.
+    https://estatistica.madeira.gov.pt/
 
 ES wages:
     Agencia Tributaria — "Salario Medio Anual" (mean annual salary from tax
@@ -301,7 +306,12 @@ PT_QP_NAME_TO_NUTS3 = {
 
 
 def _fetch_pt_wages_qp() -> pd.DataFrame:
-    """NUTS-3 monthly base pay from MTSS Quadros de Pessoal (continental PT)."""
+    """NUTS-3 monthly base pay from MTSS Quadros de Pessoal.
+
+    Continental PT: sheet q25 of the DGCP/MTSSS series (base pay directly).
+    Madeira (PT300): DREM series (mean monthly earnings, converted to
+    base-pay-equivalent using the mainland ganho/base ratio from q37/q25).
+    """
     xls_url = ("https://www.dgcp.mtsss.gov.pt/documents/10182/10928/"
                "seriesqp_2014_2024.xlsx/d0805880-6aef-4eb1-8602-56c1b8a989a1")
     xls_path = Path(tempfile.gettempdir()) / "seriesqp_2014_2024.xlsx"
@@ -311,6 +321,7 @@ def _fetch_pt_wages_qp() -> pd.DataFrame:
         resp.raise_for_status()
         xls_path.write_bytes(resp.content)
 
+    # --- Continental: base pay from q25 ---
     df = pd.read_excel(xls_path, sheet_name='q25', header=None)
     years = [int(df.iloc[3, c]) for c in range(1, df.shape[1]) if pd.notna(df.iloc[3, c])]
 
@@ -328,7 +339,86 @@ def _fetch_pt_wages_qp() -> pd.DataFrame:
                     'year': year,
                     'avg_annual_wage': float(val) * 14,
                 })
+
+    # --- Madeira: ganho from DREM, converted to base-pay-equivalent ---
+    records.extend(_fetch_madeira_wages_drem(xls_path, years))
+
     return pd.DataFrame(records)
+
+
+def _fetch_madeira_wages_drem(mainland_xls: Path, mainland_years: list[int]) -> list[dict]:
+    """Madeira wages from DREM Quadros de Pessoal (ganho → base-pay-equivalent).
+
+    The Madeira regional stats office publishes mean monthly earnings ("ganho")
+    but not base pay ("remuneração base").
+    Ganho = base + meal subsidy + shift pay + regular bonuses + overtime.
+    We convert using the mainland ganho/base ratio (q37/q25),
+    which is ~1.20 and remarkably stable across years and regions (σ ≈ 0.004).
+    """
+    # Compute per-year ganho/base ratio from mainland totals
+    try:
+        q25 = pd.read_excel(mainland_xls, sheet_name='q25', header=None)
+        q37 = pd.read_excel(mainland_xls, sheet_name='q37', header=None)
+    except Exception:
+        return []
+
+    base_years = [int(q25.iloc[3, c]) for c in range(1, q25.shape[1])
+                  if pd.notna(q25.iloc[3, c])]
+    ganho_years = [int(q37.iloc[3, c]) for c in range(1, q37.shape[1])
+                   if pd.notna(q37.iloc[3, c])]
+
+    # "Total" row is the first data row (row 4) in both sheets
+    ratio_by_year = {}
+    for j, yr in enumerate(base_years):
+        base_val = q25.iloc[4, j + 1]
+        if yr in ganho_years and pd.notna(base_val):
+            gj = ganho_years.index(yr)
+            ganho_val = q37.iloc[4, gj + 1]
+            if pd.notna(ganho_val) and float(base_val) > 0:
+                ratio_by_year[yr] = float(ganho_val) / float(base_val)
+    mean_ratio = (sum(ratio_by_year.values()) / len(ratio_by_year)
+                  if ratio_by_year else 1.20)
+
+    # Fetch Madeira data
+    drem_url = ("https://estatistica.madeira.gov.pt/download-now/social/"
+                "merctrab-pt/2015-11-19-16-43-36/serie-retrospetiva-quadro-pessoal/"
+                "send/464-quadros-de-pessoal-serie-retrospetiva/"
+                "20007-serie-retrospetiva-das-estatisticas-dos-quadros-de-pessoal-"
+                "1995-2024.html")
+    drem_path = Path(tempfile.gettempdir()) / "s_quadpessoal_9524.xlsx"
+
+    if not drem_path.exists():
+        resp = requests.get(drem_url, timeout=60)
+        resp.raise_for_status()
+        drem_path.write_bytes(resp.content)
+
+    try:
+        drem = pd.read_excel(drem_path, sheet_name='Q2', header=None)
+    except Exception:
+        return []
+
+    # Row 3: years; Row 5: R.A. Madeira, HM (both sexes)
+    drem_years = [int(drem.iloc[3, c]) for c in range(3, drem.shape[1])
+                  if pd.notna(drem.iloc[3, c])]
+
+    records = []
+    for j, yr in enumerate(drem_years):
+        if yr not in mainland_years:
+            continue
+        ganho = drem.iloc[5, j + 3]
+        if pd.notna(ganho):
+            r = ratio_by_year.get(yr, mean_ratio)
+            base_equiv = float(ganho) / r
+            records.append({
+                'nuts3': 'PT300',
+                'year': yr,
+                'avg_annual_wage': base_equiv * 14,
+            })
+
+    if records:
+        print(f"  Madeira: {len(records)} years from DREM "
+              f"(ganho÷{mean_ratio:.3f} → base-pay-equivalent)")
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -1273,6 +1363,7 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
             print(f"  [!] Wage data: using {closest} (no {year})")
     merged = merged.merge(wages_yr, on=wage_key, how='left')
 
+    merged['wage_fallback'] = False
     missing = merged['avg_annual_wage'].isna().sum()
     if missing > 0 and nuts3_wages:
         merged['nuts2'] = merged['nuts3'].str[:4]
@@ -1283,6 +1374,7 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
         fb_map = fb_yr.set_index('nuts2')['avg_annual_wage']
         mask = merged['avg_annual_wage'].isna()
         merged.loc[mask, 'avg_annual_wage'] = merged.loc[mask, 'nuts2'].map(fb_map)
+        merged.loc[mask, 'wage_fallback'] = True
         filled = missing - merged['avg_annual_wage'].isna().sum()
         if filled > 0:
             print(f"  [!] {filled} regions filled from Eurostat NUTS-2 fallback")
@@ -1385,6 +1477,11 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
         ax.scatter(x_vals[is_outlier], y_vals[is_outlier], s=60,
                    facecolors='none', edgecolors='red', linewidth=0.5, zorder=4)
 
+    if 'wage_fallback' in plot_df.columns and plot_df['wage_fallback'].any():
+        fb = plot_df['wage_fallback'].values
+        ax.scatter(plot_df.loc[fb, 'jobs_per_km2'], plot_df.loc[fb, y_col], s=60,
+                   facecolors='none', edgecolors='black', linewidth=0.5, zorder=4)
+
     for i, row in df.iterrows():
         if outliers == 'exclude' and is_outlier[i]:
             continue
@@ -1478,6 +1575,12 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
         if outliers == 'highlight' and chunk_outlier.any():
             ax.scatter(x_vals[chunk_outlier], y_vals[chunk_outlier], s=60,
                        facecolors='none', edgecolors='red', linewidth=0.5, zorder=4)
+
+        if 'wage_fallback' in df.columns and df['wage_fallback'].any():
+            fb = df['wage_fallback'].values & keep
+            if fb.any():
+                ax.scatter(x_vals[fb], y_vals[fb], s=60,
+                           facecolors='none', edgecolors='black', linewidth=0.5, zorder=4)
 
         for j, (_, row) in enumerate(df.iterrows()):
             if outliers == 'exclude' and chunk_outlier[j]:
