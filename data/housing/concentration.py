@@ -11,6 +11,7 @@ Subcommands:
     eu <pct>        Compare all EU-27 countries for a given target.
     region <nuts3>  Time series for a single NUTS-3 region.
     top             Top-region share trajectories for all EU-27.
+    list-regions    List all NUTS-3 regions for a country.
 
 Dependencies:
     pip install requests pandas matplotlib
@@ -949,7 +950,25 @@ def main():
     cap_parser.add_argument("--min-regions", type=int, default=5,
                             help="Exclude countries with fewer NUTS-3 regions (default: 5)")
 
+    list_parser = subparsers.add_parser("list-regions",
+                                        help="List all NUTS-3 regions for a country")
+    list_parser.add_argument("country", type=str, help="2-letter EU country code")
+
     args = parser.parse_args()
+
+    if args.mode == 'list-regions':
+        raw_df = fetch_eurostat_data(args.country)
+        if raw_df.empty:
+            print("[-] No data", file=sys.stderr)
+            sys.exit(1)
+        latest_year = int(raw_df['year'].max())
+        regions = (raw_df[raw_df['year'] == latest_year]
+                   .sort_values('region_code')[['region_code', 'region_name']]
+                   .drop_duplicates())
+        print(f"\nNUTS-3 regions for {args.country.upper()} ({len(regions)} regions):\n")
+        for _, r in regions.iterrows():
+            print(f"  {r['region_code']}  {r['region_name']}")
+        return
 
     if args.mode == 'top':
         df = top_region_analysis(min_regions=args.min_regions)
