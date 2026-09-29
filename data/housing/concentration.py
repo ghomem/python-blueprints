@@ -8,6 +8,9 @@ concentration metrics over time.
 Subcommands:
     cr <n>          Concentration ratio: share held by top n regions.
     target <pct>    Minimum regions needed to reach pct% of employment.
+    eu <pct>        Compare all EU-27 countries for a given target.
+    region <nuts3>  Time series for a single NUTS-3 region.
+    top             Top-region share trajectories for all EU-27.
 
 Dependencies:
     pip install requests pandas matplotlib
@@ -601,6 +604,191 @@ def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
     print(f"[+] Area fraction plot saved to: {path2}")
 
 
+def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]:
+    """Extract NUTS-3 employment from JSON-stat for ALL years at once.
+    Returns {year: {cc: [{region_code, region_name, employment}]}}."""
+    dims = data['dimension']
+    geo_idx = dims['geo']['category']['index']
+    time_idx = dims['time']['category']['index']
+    geo_labels = dims['geo']['category']['label']
+    dim_ids = data['id']
+    dim_sizes = data['size']
+
+    geo_dim = dim_ids.index('geo')
+    time_dim = dim_ids.index('time')
+
+    strides = [1] * len(dim_sizes)
+    for i in range(len(dim_sizes) - 2, -1, -1):
+        strides[i] = strides[i + 1] * dim_sizes[i + 1]
+
+    defaults = {}
+    for i, name in enumerate(dim_ids):
+        if name not in ('geo', 'time'):
+            defaults[i] = min(dims[name]['category']['index'].values())
+
+    values = data['value']
+    result: dict[int, dict[str, list[dict]]] = {}
+    for t_str, t_pos in time_idx.items():
+        year = int(t_str)
+        by_cc: dict[str, list[dict]] = {}
+        for code, g_pos in geo_idx.items():
+            if len(code) != 5:
+                continue
+            cc = code[:2]
+            coords = {geo_dim: g_pos, time_dim: t_pos}
+            coords.update(defaults)
+            flat = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
+            val = values.get(str(flat))
+            if val is not None:
+                by_cc.setdefault(cc, []).append({
+                    'region_code': code,
+                    'region_name': geo_labels.get(code, code),
+                    'employment': float(val),
+                })
+        result[year] = by_cc
+    return result
+
+
+def top_region_analysis(min_regions: int = 5) -> pd.DataFrame:
+    """For each EU-27 country, find the top employment region and build a full time series."""
+    print("[+] Fetching EU-wide employment data...", flush=True)
+    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
+                                  wstatus="EMP", nace_r2="TOTAL")
+    all_years_data = _extract_all_nuts3_all_years(emp_raw)
+    years = sorted(all_years_data.keys())
+
+    rows = []
+    for cc in EU27:
+        cc_year_counts = {yr: len(all_years_data[yr].get(cc, []))
+                          for yr in years}
+        max_count = max(cc_year_counts.values()) if cc_year_counts else 0
+        if max_count < min_regions:
+            continue
+        good_years = [yr for yr, n in cc_year_counts.items()
+                      if n >= max_count * 0.8]
+
+        ref_year = max(y for y in good_years if y <= 2023) if any(y <= 2023 for y in good_years) else good_years[-1]
+        ref_regions = all_years_data[ref_year].get(cc, [])
+        ref_regions.sort(key=lambda r: r['employment'], reverse=True)
+        ref_total = sum(r['employment'] for r in ref_regions)
+        if ref_total == 0:
+            continue
+        top_code = ref_regions[0]['region_code']
+        top_name = ref_regions[0]['region_name']
+
+        for yr in good_years:
+            yr_regions = all_years_data[yr].get(cc, [])
+            if not yr_regions:
+                continue
+            total = sum(r['employment'] for r in yr_regions)
+            emp = next((r['employment'] for r in yr_regions
+                        if r['region_code'] == top_code), None)
+            if emp is not None and total > 0:
+                rows.append({
+                    'country': cc, 'region_code': top_code, 'region_name': top_name,
+                    'year': yr, 'employment_k': emp, 'share_pct': emp / total * 100,
+                })
+
+    return pd.DataFrame(rows)
+
+
+def plot_top_regions(df: pd.DataFrame):
+    """Small-multiples line chart of capital share trajectories + summary bar chart."""
+    out_dir = Path(tempfile.gettempdir()) / "concentration"
+    out_dir.mkdir(exist_ok=True)
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+
+    countries = sorted(df['country'].unique())
+    n = len(countries)
+    cols = 5
+    plot_rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(plot_rows, cols, figsize=(20, 3.5 * plot_rows), dpi=200)
+    axes = axes.flatten()
+
+    for i, cc in enumerate(countries):
+        ax = axes[i]
+        cdf = df[df['country'] == cc].sort_values('year')
+        name = cdf.iloc[0]['region_name']
+        if len(name) > 22:
+            name = name[:20] + '..'
+
+        ax.plot(cdf['year'], cdf['share_pct'], linewidth=2, color='#1f77b4')
+        ax.fill_between(cdf['year'], cdf['share_pct'], alpha=0.15, color='#1f77b4')
+        ax.set_title(f"{cc}: {name}", fontsize=10, fontweight='bold')
+        ax.tick_params(labelsize=8)
+
+        first, last = cdf.iloc[0], cdf.iloc[-1]
+        delta = last['share_pct'] - first['share_pct']
+        sign = '+' if delta >= 0 else ''
+        color = '#c62828' if delta > 1 else ('#2e7d32' if delta < -1 else '#555555')
+        ax.annotate(f"{last['share_pct']:.1f}%\n({sign}{delta:.1f}pp)",
+                    xy=(1, 1), xycoords='axes fraction', ha='right', va='top',
+                    fontsize=8, fontweight='bold', color=color,
+                    bbox=dict(boxstyle='round,pad=0.2', fc='white', ec=color, alpha=0.8))
+
+        y_min = cdf['share_pct'].min()
+        y_max = cdf['share_pct'].max()
+        margin = max((y_max - y_min) * 0.2, 0.3)
+        ax.set_ylim(y_min - margin, y_max + margin)
+
+    for j in range(i + 1, len(axes)):
+        axes[j].set_visible(False)
+
+    fig.suptitle('Top Region Employment Share Trajectories — EU Countries',
+                 fontsize=15, fontweight='bold', y=1.01)
+    fig.tight_layout()
+    path1 = out_dir / "EU_top_region_trajectories.png"
+    plt.savefig(path1, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[+] Trajectories plot saved to: {path1}")
+
+    # Summary bar chart: total change (latest - earliest) sorted
+    summary = []
+    for cc in countries:
+        cdf = df[df['country'] == cc].sort_values('year')
+        first, last = cdf.iloc[0], cdf.iloc[-1]
+        summary.append({
+            'country': cc,
+            'region_name': cdf.iloc[0]['region_name'],
+            'first_share': first['share_pct'],
+            'last_share': last['share_pct'],
+            'delta': last['share_pct'] - first['share_pct'],
+            'first_year': int(first['year']),
+            'last_year': int(last['year']),
+        })
+    sdf = pd.DataFrame(summary).sort_values('delta', ascending=True)
+
+    fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
+    colors = ['#c62828' if d > 0 else '#2e7d32' for d in sdf['delta']]
+    bars = ax.barh(range(len(sdf)), sdf['delta'], color=colors, edgecolor='white', linewidth=0.5)
+    ax.set_yticks(range(len(sdf)))
+    labels = [f"{r['country']} — {r['region_name'][:25]}" for _, r in sdf.iterrows()]
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel('Change in national employment share (pp)', fontsize=11, labelpad=10)
+    yr_range = f"{sdf.iloc[0]['first_year']}–{sdf.iloc[0]['last_year']}"
+    ax.set_title(f'Change in Top Region Employment Share ({yr_range})',
+                 fontsize=14, fontweight='bold', pad=15)
+    ax.axvline(0, color='black', linewidth=0.8)
+
+    for i, (_, row) in enumerate(sdf.iterrows()):
+        sign = '+' if row['delta'] >= 0 else ''
+        offset = 0.2 if row['delta'] >= 0 else -0.2
+        ha = 'left' if row['delta'] >= 0 else 'right'
+        ax.text(row['delta'] + offset, i, f"{sign}{row['delta']:.1f}pp",
+                va='center', ha=ha, fontsize=8, fontweight='bold')
+
+    ax.grid(True, axis='x', linestyle='--', alpha=0.6)
+    fig.tight_layout()
+    path2 = out_dir / "EU_top_region_delta.png"
+    plt.savefig(path2, dpi=300)
+    plt.close(fig)
+    print(f"[+] Delta plot saved to: {path2}")
+
+    csv_path = out_dir / "EU_top_region_timeseries.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"[+] CSV exported to: {csv_path}")
+
+
 def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
     """Dual-axis time series: nominal employment and share of national total."""
     cc = nuts3[:2]
@@ -756,7 +944,49 @@ def main():
     region_parser.add_argument("nuts3", type=str, help="NUTS-3 code (e.g. PT1A0, ES300, DE600)")
     region_parser.add_argument("-o", "--output", type=str, default=None)
 
+    cap_parser = subparsers.add_parser("top",
+                                       help="Top-region share trajectories for all EU-27")
+    cap_parser.add_argument("--min-regions", type=int, default=5,
+                            help="Exclude countries with fewer NUTS-3 regions (default: 5)")
+
     args = parser.parse_args()
+
+    if args.mode == 'top':
+        df = top_region_analysis(min_regions=args.min_regions)
+        if df.empty:
+            print("[-] No data", file=sys.stderr)
+            sys.exit(1)
+
+        countries = sorted(df['country'].unique())
+        print(f"\n{'CC':>3}  {'Region':<35}  {'Start':>6}  {'Peak':>6}  {'PkYr':>5}"
+              f"  {'Latest':>6}  {'5yr Δ':>7}  {'Shape'}")
+        print("-" * 105)
+        for cc in countries:
+            cdf = df[df['country'] == cc].sort_values('year')
+            name = cdf.iloc[0]['region_name'][:35]
+            first = cdf.iloc[0]['share_pct']
+            last = cdf.iloc[-1]['share_pct']
+            peak_row = cdf.loc[cdf['share_pct'].idxmax()]
+            peak = peak_row['share_pct']
+            peak_yr = int(peak_row['year'])
+            recent = cdf[cdf['year'] >= 2018]
+            delta5 = (recent.iloc[-1]['share_pct'] - recent.iloc[0]['share_pct']
+                      if len(recent) >= 2 else 0)
+            if peak_yr <= 2015 and (peak - last) > 0.5:
+                shape = "PLATEAU/DECLINE"
+            elif abs(delta5) < 0.3 and abs(last - first) < 1.0:
+                shape = "FLAT"
+            elif delta5 > 0.3:
+                shape = "STILL RISING"
+            elif delta5 < -0.3:
+                shape = "DECLINING"
+            else:
+                shape = "LEVELLING?"
+            print(f"{cc:>3}  {name:<35}  {first:>5.1f}%  {peak:>5.1f}%  {peak_yr:>5}"
+                  f"  {last:>5.1f}%  {delta5:>+6.2f}pp  {shape}")
+
+        plot_top_regions(df)
+        return
 
     if args.mode == 'eu':
         df = eu_comparison(args.pct, args.year, min_regions=args.min_regions,
