@@ -1077,14 +1077,118 @@ def fetch_nl_prices() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Tourism intensity (nights per worker)
+# ---------------------------------------------------------------------------
+#
+# Source: Eurostat tour_occ_nin2 — nights spent at tourist accommodation
+# establishments, by NUTS-3 region, annual.
+#
+# NUTS code version caveat:
+#   Eurostat is migrating from the pre-2021 NUTS codes to NUTS 2021. The
+#   tourism dataset publishes BOTH code versions, each covering different
+#   years. For PT and NL, the NUTS 2021 codes sometimes represent MERGED
+#   regions (e.g. PT170 "Área Metropolitana de Lisboa" = old PT1A0 "Grande
+#   Lisboa" + PT1B0 "Península de Setúbal"), so the boundaries don't match
+#   the employment data (which uses old codes).
+#
+#   As of 2025-09, year 2023 is the only year where the tourism dataset uses
+#   the OLD codes for all four countries (PT, ES, FR, NL), matching the
+#   employment dataset exactly. Years 2021–2022 would need a crosswalk for
+#   PT and NL, with the Lisboa merge making PT impossible without splitting.
+#
+#   This is why --tourism is restricted to year 2023.
+
+TOURISM_NPW_CAP = 86  # nights/worker: Algarve-level; above this → max saturation
+
+def fetch_tourism_nights(year: int = 2023) -> dict[str, float]:
+    """Fetch total tourist nights per NUTS-3 region from Eurostat tour_occ_nin2.
+
+    Returns {nuts3_code: total_nights} for all available regions.
+    Only year 2023 uses codes consistent with the employment dataset
+    (see module-level comment above).
+    """
+    local = _load_df('ALL', 'tourism')
+    if local is not None:
+        return dict(zip(local['nuts3'], local['tourist_nights']))
+
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/tour_occ_nin2"
+    params = {
+        "format": "JSON", "lang": "EN",
+        "c_resid": "TOTAL", "unit": "NR",
+        "nace_r2": "I551-I553",
+        "time": str(year),
+    }
+    print(f"[+] Fetching tourist nights data from Eurostat ({year})...", flush=True)
+    try:
+        resp = requests.get(url, params=params, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        print(f"[-] Tourism data fetch failed: {e}", file=sys.stderr)
+        return {}
+
+    dims = data['dimension']
+    geo_idx = dims['geo']['category']['index']
+    time_idx = dims['time']['category']['index']
+    dim_ids = data['id']
+    dim_sizes = data['size']
+
+    if str(year) not in time_idx:
+        print(f"[-] Year {year} not in tourism dataset", file=sys.stderr)
+        return {}
+    t_pos = time_idx[str(year)]
+
+    geo_dim = dim_ids.index('geo')
+    time_dim = dim_ids.index('time')
+    strides = [1] * len(dim_sizes)
+    for i in range(len(dim_sizes) - 2, -1, -1):
+        strides[i] = strides[i + 1] * dim_sizes[i + 1]
+    defaults = {}
+    for i, name in enumerate(dim_ids):
+        if name not in ('geo', 'time'):
+            defaults[i] = min(dims[name]['category']['index'].values())
+
+    values = data['value']
+    result = {}
+    for code, g_pos in geo_idx.items():
+        if len(code) != 5:
+            continue
+        coords = {geo_dim: g_pos, time_dim: t_pos}
+        coords.update(defaults)
+        flat = sum(coords[i] * strides[i] for i in range(len(dim_ids)))
+        val = values.get(str(flat))
+        if val is not None:
+            result[code] = float(val)
+    print(f"  [{len(result)} NUTS-3 regions with tourism data]")
+
+    df = pd.DataFrame([
+        {'nuts3': code, 'tourist_nights': nights}
+        for code, nights in result.items()
+    ])
+    _save_df(df, 'ALL', 'tourism')
+
+    return result
+
+
+def add_tourism_intensity(df: pd.DataFrame,
+                          tourism: dict[str, float]) -> pd.DataFrame:
+    """Add nights_per_worker column to scatter DataFrame."""
+    df = df.copy()
+    df['tourist_nights'] = df['nuts3'].map(tourism)
+    df['nights_per_worker'] = (
+        df['tourist_nights'] / (df['employment_ths'] * 1000))
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 COUNTRY_COLORS = {
     'PT': '#d95f02',
-    'ES': '#1f77b4',
+    'ES': '#0051b5',
     'FR': '#2ca02c',
-    'NL': '#7570b3',
+    'NL': '#7b2d8e',
 }
 
 DATA_SOURCES = {
@@ -1197,6 +1301,18 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
+def _tourism_colors(base_hex, npw_values, norm):
+    """Per-point RGB with saturation driven by tourism intensity."""
+    from matplotlib.colors import rgb_to_hsv, hsv_to_rgb, to_rgb
+    rgb = np.array(to_rgb(base_hex))
+    hsv = rgb_to_hsv(rgb.reshape(1, 1, 3)).reshape(3)
+    t = norm(npw_values)
+    n = len(npw_values)
+    hsv_arr = np.tile(hsv, (n, 1))
+    hsv_arr[:, 1] = t * hsv[1]
+    return hsv_to_rgb(hsv_arr.reshape(n, 1, 3)).reshape(n, 3)
+
+
 def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """IQR on log-linear residuals: True for outlier points."""
     valid = x > 0
@@ -1237,7 +1353,8 @@ def _fit_log_trend(ax, x, y, exclude_mask=None):
 
 
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
-                 metric: str = 'effort', outliers: str | None = None):
+                 metric: str = 'effort', outliers: str | None = None,
+                 tourism: bool = False):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
@@ -1252,7 +1369,15 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
     n_outliers = int(is_outlier.sum())
     plot_df = df[~is_outlier].reset_index(drop=True) if outliers == 'exclude' else df
 
-    if outliers == 'highlight':
+    from matplotlib.colors import Normalize, LinearSegmentedColormap
+    tourism_norm = Normalize(vmin=0, vmax=TOURISM_NPW_CAP, clip=True) if tourism else None
+
+    if tourism and 'nights_per_worker' in plot_df.columns:
+        npw = plot_df['nights_per_worker'].fillna(0).values
+        colors = _tourism_colors(base_color, npw, tourism_norm)
+        ax.scatter(plot_df['jobs_per_km2'], plot_df[y_col], s=70, alpha=0.85,
+                   c=colors, edgecolors=base_color, linewidth=1.0)
+    elif outliers == 'highlight':
         norm = ~is_outlier
         ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
                    color=base_color, edgecolors='white', linewidth=0.5)
@@ -1271,13 +1396,21 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
                     fontsize=7, alpha=0.7, xytext=(4, 4),
                     textcoords='offset points')
 
+    if tourism:
+        cbar_cmap = LinearSegmentedColormap.from_list(
+            'tourism_sat', ['#cccccc', base_color], N=256)
+        sm = plt.cm.ScalarMappable(cmap=cbar_cmap, norm=tourism_norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, location='left', pad=0.08, shrink=0.7)
+        cbar.set_label('Tourist nights / worker / year', fontsize=10, labelpad=10)
+
     r2 = _fit_log_trend(ax, x_vals, y_vals, exclude_mask=is_outlier if outliers else None)
     r2_label = 'log fit'
     if outliers and n_outliers:
         r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
     if r2 is not None:
-        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ ({r2_label})',
-                transform=ax.transAxes, fontsize=10, va='top',
+        ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ ({r2_label})',
+                transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
     ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
@@ -1294,7 +1427,7 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
 def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_file: str,
                   metric: str = 'effort', outliers: str | None = None,
-                  log_x: bool = True):
+                  log_x: bool = True, tourism: bool = False):
     """Combined scatter plot for multiple countries, using region names as labels."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
@@ -1315,6 +1448,9 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     is_outlier = _detect_outliers(all_x, all_y) if outliers else np.zeros(len(all_x), dtype=bool)
     n_outliers = int(is_outlier.sum())
 
+    from matplotlib.colors import Normalize
+    tourism_norm = Normalize(vmin=0, vmax=TOURISM_NPW_CAP, clip=True) if tourism else None
+
     offset = 0
     for country, df in datasets:
         cc = country.upper()
@@ -1325,7 +1461,13 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
         x_vals = df['jobs_per_km2'].values
         y_vals = df[y_col].values
 
-        if outliers == 'highlight':
+        if tourism and 'nights_per_worker' in df.columns:
+            npw = df['nights_per_worker'].fillna(0).values
+            colors = _tourism_colors(color, npw, tourism_norm)
+            ax.scatter(x_vals, y_vals, s=70, alpha=0.85,
+                       c=colors, edgecolors=color, linewidth=1.0,
+                       label=cc, zorder=3)
+        elif outliers == 'highlight':
             norm = ~chunk_outlier
             if norm.any():
                 ax.scatter(x_vals[norm], y_vals[norm], s=60, alpha=0.7,
@@ -1360,9 +1502,16 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     r2_label = 'log fit, combined'
     if outliers and n_outliers:
         r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
+    info_y = 0.05
     if r2 is not None:
-        ax.text(0.05, 0.95, f'$R^2 = {r2:.3f}$ ({r2_label})',
-                transform=ax.transAxes, fontsize=10, va='top',
+        ax.text(0.95, info_y, f'$R^2 = {r2:.3f}$ ({r2_label})',
+                transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
+                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+        info_y += 0.05
+    if tourism:
+        ax.text(0.95, info_y,
+                f'Saturation = tourism intensity (0–{TOURISM_NPW_CAP} nights/worker/year)',
+                transform=ax.transAxes, fontsize=9, ha='right', va='bottom',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
     countries_label = ' + '.join(cc for cc, _ in datasets)
@@ -1373,7 +1522,7 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
     ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
-    ax.legend(fontsize=11, loc='lower right')
+    ax.legend(fontsize=11, loc='upper right')
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
@@ -1409,7 +1558,16 @@ def main():
                              '(default: all). Example: --countries PT,ES')
     parser.add_argument('--linear-x', action='store_true',
                         help='Use linear x-axis on the combined plot (default: log)')
+    parser.add_argument('--tourism', action='store_true',
+                        help='Color points by tourism intensity (nights/worker). '
+                             'Requires year=2023 (only year with matching NUTS codes '
+                             'between employment and tourism datasets).')
     args = parser.parse_args()
+
+    if args.tourism and args.year != 2023:
+        parser.error("--tourism requires year 2023. Tourism and employment datasets "
+                     "use incompatible NUTS region codes for other years "
+                     "(NUTS 2021 reclassification merged some regions).")
 
     global INPUT_DIR, SAVE_MODE
     if args.local_data:
@@ -1445,6 +1603,9 @@ def main():
     else:
         fetchers = all_fetchers
 
+    # Fetch tourism data once if requested (before country loop)
+    tourism = fetch_tourism_nights(year) if args.tourism else {}
+
     # Fetch data once (shared across metrics)
     country_data = []
     for country, fetch_prices in fetchers:
@@ -1460,6 +1621,10 @@ def main():
             df = build_scatter_data(country, prices_df, use_year)
             if args.exclude_paris:
                 df = df[df['nuts3'] != 'FR101'].reset_index(drop=True)
+            if tourism:
+                df = add_tourism_intensity(df, tourism)
+                matched = df['nights_per_worker'].notna().sum()
+                print(f"  [{country}] Tourism data matched for {matched}/{len(df)} regions")
             print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
             country_data.append((country, df, use_year))
         except Exception as e:
@@ -1477,7 +1642,8 @@ def main():
         for country, df, use_year in country_data:
             out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
             stats = plot_scatter(
-                df, country, use_year, out, metric=metric, outliers=outliers)
+                df, country, use_year, out, metric=metric, outliers=outliers,
+                tourism=args.tourism)
             combined.append((country, df))
             summary_rows.append({
                 'metric': metric, 'scope': country, 'year': use_year,
@@ -1491,7 +1657,7 @@ def main():
             out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
             stats = plot_combined(
                 combined, year, out, metric=metric, outliers=outliers,
-                log_x=not args.linear_x)
+                log_x=not args.linear_x, tourism=args.tourism)
             summary_rows.append({
                 'metric': metric, 'scope': tag, 'year': year,
                 'n_regions': stats['n_regions'],
@@ -1506,6 +1672,8 @@ def main():
             cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
                     'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
                     'effort_months_per_m2']
+            if args.tourism and 'nights_per_worker' in all_df.columns:
+                cols += ['tourist_nights', 'nights_per_worker']
             all_df = all_df[cols].sort_values(['country', 'nuts3'])
             csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
             all_df.to_csv(csv_path, index=False, float_format='%.2f')
