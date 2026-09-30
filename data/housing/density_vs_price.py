@@ -1630,42 +1630,6 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 # Choropleth map — NUTS-3 regions coloured by metric value
 # ---------------------------------------------------------------------------
 
-# Data uses NUTS 2024 codes; Eurostat GISCO geometry uses NUTS 2021.
-# This table maps codes that changed between the two versions.
-_NUTS2024_TO_2021 = {
-    # PT: Centro/Lisboa/Alentejo reclassification
-    'PT191': 'PT16D',  # Região de Aveiro
-    'PT192': 'PT16E',  # Região de Coimbra
-    'PT193': 'PT16F',  # Região de Leiria
-    'PT194': 'PT16G',  # Viseu Dão Lafões
-    'PT195': 'PT16H',  # Beira Baixa
-    'PT196': 'PT16J',  # Beiras e Serra da Estrela
-    'PT1A0': 'PT170',  # Grande Lisboa → Área Metropolitana de Lisboa
-    'PT1B0': 'PT170',  # Península de Setúbal → merged into AML
-    'PT1C1': 'PT181',  # Alentejo Litoral
-    'PT1C2': 'PT184',  # Baixo Alentejo
-    'PT1C3': 'PT186',  # Alto Alentejo
-    'PT1C4': 'PT187',  # Alentejo Central
-    'PT1D1': 'PT16B',  # Oeste
-    'PT1D2': 'PT16I',  # Médio Tejo
-    'PT1D3': 'PT185',  # Lezíria do Tejo
-    # NL: Groningen/Friesland/Holland/Brabant renumbering
-    'NL114': 'NL111',  # Oost-Groningen
-    'NL115': 'NL113',  # Overig Groningen
-    'NL127': 'NL124',  # Noord-Friesland
-    'NL128': 'NL125',  # Zuidwest-Friesland
-    'NL32A': 'NL324',  # Agglomeratie Haarlem
-    'NL32B': 'NL329',  # Groot-Amsterdam
-    'NL350': 'NL310',  # Utrecht
-    'NL361': 'NL332',  # Agglomeratie 's-Gravenhage
-    'NL362': 'NL333',  # Delft en Westland
-    'NL363': 'NL337',  # Agglomeratie Leiden en Bollenstreek
-    'NL364': 'NL33A',  # Zuidoost-Zuid-Holland
-    'NL365': 'NL33B',  # Oost-Zuid-Holland
-    'NL366': 'NL33C',  # Groot-Rijnmond
-    'NL415': 'NL412',  # Midden-Noord-Brabant
-    'NL416': 'NL413',  # Noordoost-Noord-Brabant
-}
 
 # Mainland bounding boxes (lon_min, lat_min, lon_max, lat_max)
 _MAINLAND_BBOX = {
@@ -1677,11 +1641,11 @@ _MAINLAND_BBOX = {
 
 
 def _fetch_nuts3_geometry():
-    """Download (and cache) NUTS-3 boundaries from Eurostat GISCO."""
-    geojson_path = Path(tempfile.gettempdir()) / "NUTS_RG_10M_2021_4326_LEVL_3.geojson"
+    """Download (and cache) NUTS-3 boundaries from Eurostat GISCO (NUTS 2024)."""
+    geojson_path = Path(tempfile.gettempdir()) / "NUTS_RG_10M_2024_4326_LEVL_3.geojson"
     if not geojson_path.exists():
         url = ("https://gisco-services.ec.europa.eu/distribution/v2/nuts/"
-               "geojson/NUTS_RG_10M_2021_4326_LEVL_3.geojson")
+               "geojson/NUTS_RG_10M_2024_4326_LEVL_3.geojson")
         print("[+] Downloading NUTS-3 boundaries (GISCO)...", flush=True)
         resp = requests.get(url, timeout=60)
         resp.raise_for_status()
@@ -1702,14 +1666,8 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
     gdf = _fetch_nuts3_geometry()
     geo = gdf[gdf['CNTR_CODE'] == cc].copy()
 
-    # Map data NUTS-2024 codes to geometry NUTS-2021 codes
-    map_df = df.copy()
-    map_df['geo_code'] = map_df['nuts3'].map(
-        lambda c: _NUTS2024_TO_2021.get(c, c))
-
-    # For merged regions (PT1A0 + PT1B0 → PT170), average the metric
-    agg = map_df.groupby('geo_code')[y_col].mean().reset_index()
-    merged = geo.merge(agg, left_on='NUTS_ID', right_on='geo_code', how='left')
+    merged = geo.merge(df[['nuts3', y_col]], left_on='NUTS_ID', right_on='nuts3',
+                        how='left')
 
     bbox = _MAINLAND_BBOX.get(cc)
     if bbox:
