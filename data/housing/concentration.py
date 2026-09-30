@@ -938,8 +938,10 @@ def main():
                            help="Reference year (default: 2022)")
     eu_parser.add_argument("--min-regions", type=int, default=5,
                            help="Exclude countries with fewer NUTS-3 regions (default: 5)")
-    eu_parser.add_argument("--compare-year", type=int, default=None,
-                           help="Show trend from this year (e.g. 2012 for a 10-year diff)")
+    eu_parser.add_argument("--compare-year", type=int, default=2000,
+                           help="Baseline year for trend (default: 2000). Avoid crisis "
+                                "troughs (2009-2012) — they inflate concentration "
+                                "artificially, understating the real trend.")
 
     region_parser = subparsers.add_parser("region", help="Time series for a single NUTS-3 region")
     region_parser.add_argument("nuts3", type=str, help="NUTS-3 code (e.g. PT1A0, ES300, DE600)")
