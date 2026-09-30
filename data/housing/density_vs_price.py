@@ -1829,6 +1829,10 @@ def main():
                 print(f"  [{country}] Tourism data matched for {matched}/{len(df)} regions")
             print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
             country_data.append((country, df, use_year))
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            print(f"[-] {country} skipped: {e}", file=sys.stderr)
         except Exception as e:
             print(f"[-] {country} failed: {e}", file=sys.stderr)
             import traceback
