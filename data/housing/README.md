@@ -3,8 +3,7 @@
 Two scripts for analysing NUTS-3 regional employment patterns across the EU,
 with a focus on PT, ES, FR and NL.
 
-**Dependencies:** `sudo apt install python3-requests python3-pandas python3-matplotlib python3-openpyxl`
-**For `--map`:** `sudo apt install python3-geopandas`
+**Dependencies:** `sudo apt install python3-requests python3-pandas python3-matplotlib python3-openpyxl python3-geopandas`
 
 ## density_vs_price.py
 
