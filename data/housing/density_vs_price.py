@@ -1705,8 +1705,10 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         if not name:
             continue
         fontsize = 5 if cc in ('FR', 'ES') else 6
+        val = row.get(y_col, None)
+        txt_color = 'white' if (val is not None and val >= 1.75) else '#333333'
         ax.text(c.x, c.y, name, fontsize=fontsize, ha='center', va='center',
-                color='#333333', fontweight='medium')
+                color=txt_color, fontweight='medium')
 
     ax.set_title(f'{mc["title"]} — {cc} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold')
