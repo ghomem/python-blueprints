@@ -124,6 +124,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as PathEffects
 import numpy as np
 import pandas as pd
 import requests
@@ -1625,6 +1626,140 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     return {'r2': r2, 'n_regions': n_total, 'n_outliers': n_outliers}
 
 
+# ---------------------------------------------------------------------------
+# Choropleth map — NUTS-3 regions coloured by metric value
+# ---------------------------------------------------------------------------
+
+# Data uses NUTS 2024 codes; Eurostat GISCO geometry uses NUTS 2021.
+# This table maps codes that changed between the two versions.
+_NUTS2024_TO_2021 = {
+    # PT: Centro/Lisboa/Alentejo reclassification
+    'PT191': 'PT16D',  # Região de Aveiro
+    'PT192': 'PT16E',  # Região de Coimbra
+    'PT193': 'PT16F',  # Região de Leiria
+    'PT194': 'PT16G',  # Viseu Dão Lafões
+    'PT195': 'PT16H',  # Beira Baixa
+    'PT196': 'PT16J',  # Beiras e Serra da Estrela
+    'PT1A0': 'PT170',  # Grande Lisboa → Área Metropolitana de Lisboa
+    'PT1B0': 'PT170',  # Península de Setúbal → merged into AML
+    'PT1C1': 'PT181',  # Alentejo Litoral
+    'PT1C2': 'PT184',  # Baixo Alentejo
+    'PT1C3': 'PT186',  # Alto Alentejo
+    'PT1C4': 'PT187',  # Alentejo Central
+    'PT1D1': 'PT16B',  # Oeste
+    'PT1D2': 'PT16I',  # Médio Tejo
+    'PT1D3': 'PT185',  # Lezíria do Tejo
+    # NL: Groningen/Friesland/Holland/Brabant renumbering
+    'NL114': 'NL111',  # Oost-Groningen
+    'NL115': 'NL113',  # Overig Groningen
+    'NL127': 'NL124',  # Noord-Friesland
+    'NL128': 'NL125',  # Zuidwest-Friesland
+    'NL32A': 'NL324',  # Agglomeratie Haarlem
+    'NL32B': 'NL329',  # Groot-Amsterdam
+    'NL350': 'NL310',  # Utrecht
+    'NL361': 'NL332',  # Agglomeratie 's-Gravenhage
+    'NL362': 'NL333',  # Delft en Westland
+    'NL363': 'NL337',  # Agglomeratie Leiden en Bollenstreek
+    'NL364': 'NL33A',  # Zuidoost-Zuid-Holland
+    'NL365': 'NL33B',  # Oost-Zuid-Holland
+    'NL366': 'NL33C',  # Groot-Rijnmond
+    'NL415': 'NL412',  # Midden-Noord-Brabant
+    'NL416': 'NL413',  # Noordoost-Noord-Brabant
+}
+
+# Mainland bounding boxes (lon_min, lat_min, lon_max, lat_max)
+_MAINLAND_BBOX = {
+    'PT': (-9.7, 36.9, -6.0, 42.2),
+    'ES': (-9.5, 35.8, 3.4, 43.9),
+    'FR': (-5.3, 41.2, 9.7, 51.2),
+    'NL': (3.2, 50.6, 7.4, 53.7),
+}
+
+
+def _fetch_nuts3_geometry():
+    """Download (and cache) NUTS-3 boundaries from Eurostat GISCO."""
+    geojson_path = Path(tempfile.gettempdir()) / "NUTS_RG_10M_2021_4326_LEVL_3.geojson"
+    if not geojson_path.exists():
+        url = ("https://gisco-services.ec.europa.eu/distribution/v2/nuts/"
+               "geojson/NUTS_RG_10M_2021_4326_LEVL_3.geojson")
+        print("[+] Downloading NUTS-3 boundaries (GISCO)...", flush=True)
+        resp = requests.get(url, timeout=60)
+        resp.raise_for_status()
+        geojson_path.write_bytes(resp.content)
+    import geopandas as gpd
+    return gpd.read_file(geojson_path)
+
+
+def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
+             metric: str = 'effort', vmin: float = None, vmax: float = None):
+    """Choropleth map of a metric for one country's NUTS-3 regions."""
+    import geopandas as gpd
+
+    mc = METRIC_CONFIG[metric]
+    y_col = mc['y_col']
+    cc = country.upper()
+
+    gdf = _fetch_nuts3_geometry()
+    geo = gdf[gdf['CNTR_CODE'] == cc].copy()
+
+    # Map data NUTS-2024 codes to geometry NUTS-2021 codes
+    map_df = df.copy()
+    map_df['geo_code'] = map_df['nuts3'].map(
+        lambda c: _NUTS2024_TO_2021.get(c, c))
+
+    # For merged regions (PT1A0 + PT1B0 → PT170), average the metric
+    agg = map_df.groupby('geo_code')[y_col].mean().reset_index()
+    merged = geo.merge(agg, left_on='NUTS_ID', right_on='geo_code', how='left')
+
+    bbox = _MAINLAND_BBOX.get(cc)
+    if bbox:
+        merged = merged.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]]
+
+    fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
+    if bbox:
+        ax.set_xlim(bbox[0], bbox[2])
+        ax.set_ylim(bbox[1], bbox[3])
+
+    from matplotlib.colors import Normalize
+    norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
+
+    no_data = merged[merged[y_col].isna()]
+    if not no_data.empty:
+        no_data.plot(ax=ax, color='#e0e0e0', edgecolor='white', linewidth=0.5)
+
+    has_data = merged[merged[y_col].notna()]
+    if not has_data.empty:
+        has_data.plot(ax=ax, column=y_col, cmap='YlOrRd', norm=norm,
+                      edgecolor='white', linewidth=0.5, legend=False)
+
+    sm = plt.cm.ScalarMappable(cmap='YlOrRd', norm=norm)
+    sm.set_array([])
+    cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
+    cbar = fig.colorbar(sm, cax=cax)
+    cbar.set_label(mc['ylabel'], fontsize=10)
+
+    # Region name labels at centroids
+    for _, row in merged.iterrows():
+        if row.geometry is None:
+            continue
+        c = row.geometry.centroid
+        name = row.get('NAME_LATN', '')
+        if not name:
+            continue
+        fontsize = 5 if cc in ('FR', 'ES') else 6
+        ax.text(c.x, c.y, name, fontsize=fontsize, ha='center', va='center',
+                color='#333333', fontweight='medium')
+
+    ax.set_title(f'{mc["title"]} — {cc} NUTS-3 ({year})',
+                 fontsize=14, fontweight='bold')
+    ax.set_axis_off()
+    ax.set_aspect('equal')
+
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[+] Map saved to: {output_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Employment Density vs Housing metrics — NUTS-3 scatter plot')
@@ -1655,6 +1790,9 @@ def main():
                         help='Color points by tourism intensity (nights/worker). '
                              'Requires year=2023 (only year with matching NUTS codes '
                              'between employment and tourism datasets).')
+    parser.add_argument('--map', action='store_true',
+                        help='Choropleth map of purchase effort by NUTS-3 region '
+                             '(mainland only). Colour scale calibrated to PT+ES range.')
     args = parser.parse_args()
 
     if args.tourism and args.year != 2023:
@@ -1771,6 +1909,20 @@ def main():
             csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
             all_df.to_csv(csv_path, index=False, float_format='%.2f')
             print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
+
+    if args.map and country_data:
+        # Compute PT+ES effort range for colour scale calibration
+        pt_es = [df for cc, df, _ in country_data if cc in ('PT', 'ES')]
+        if pt_es:
+            all_effort = pd.concat(pt_es)['effort_months_per_m2'].dropna()
+            vmin, vmax = all_effort.min(), all_effort.max()
+        else:
+            all_vals = pd.concat([df for _, df, _ in country_data])['effort_months_per_m2'].dropna()
+            vmin, vmax = all_vals.min(), all_vals.max()
+        for country, df, use_year in country_data:
+            map_out = str(out_dir / f"{country}_effort_map_{use_year}.png")
+            plot_map(df, country, use_year, map_out, metric='effort',
+                     vmin=vmin, vmax=vmax)
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)

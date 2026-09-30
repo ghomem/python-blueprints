@@ -4,6 +4,7 @@ Two scripts for analysing NUTS-3 regional employment patterns across the EU,
 with a focus on PT, ES, FR and NL.
 
 **Dependencies:** `sudo apt install python3-requests python3-pandas python3-matplotlib python3-openpyxl`
+**For `--map`:** `sudo apt install python3-geopandas`
 
 ## density_vs_price.py
 
@@ -40,11 +41,13 @@ python3 density_vs_price.py 2023 --local-data --tourism
 | `--countries CC` | Comma-separated codes for the combined plot (default: all) |
 | `--linear-x` | Linear x-axis on combined plot (default: log) |
 | `--tourism` | Colour by tourism intensity; 2023 only |
+| `--map` | Choropleth map of purchase effort per NUTS-3 region (mainland only) |
 
 ### Output
 
 Plots go to `/tmp/density_vs_price/`. Per-country scatter + combined plot +
-summary CSV + data-sources CSV.
+summary CSV + data-sources CSV. With `--map`, one choropleth per country
+(`{CC}_effort_map_{year}.png`); colour scale calibrated to PT+ES effort range.
 
 ### Data sources
 
