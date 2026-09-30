@@ -18,15 +18,15 @@ Area (all countries):
     https://ec.europa.eu/eurostat/databrowser/view/reg_area3/
 
 PT wages (continental):
-    DGCP/MTSSS Quadros de Pessoal — "Remuneração média mensal base" (average
-    monthly base pay for full-time dependent workers), at NUTS-3 level,
-    2014–2024. Annual = monthly × 14 (12 + holiday + Christmas subsidies).
+    DGCP/MTSSS Quadros de Pessoal — "Remuneração média mensal ganho" (mean
+    monthly earnings for full-time dependent workers), at NUTS-3 level,
+    2014–2024. Ganho = base + meal subsidy + shift pay + regular bonuses +
+    overtime. Annual = monthly × 14 (12 + holiday + Christmas subsidies).
     https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx
 
 PT wages (Madeira):
     DREM Quadros de Pessoal — "Ganho médio mensal" (mean monthly earnings),
-    converted to base-pay-equivalent using the mainland ganho/base ratio
-    (~1.20, from MTSSS q37/q25). Annual = converted monthly × 14.
+    same concept as mainland q37. Annual = monthly × 14.
     https://estatistica.madeira.gov.pt/
 
 ES wages:
@@ -307,11 +307,11 @@ PT_QP_NAME_TO_NUTS3 = {
 
 
 def _fetch_pt_wages_qp() -> pd.DataFrame:
-    """NUTS-3 monthly base pay from MTSS Quadros de Pessoal.
+    """NUTS-3 mean monthly earnings (ganho) from MTSS Quadros de Pessoal.
 
-    Continental PT: sheet q25 of the DGCP/MTSSS series (base pay directly).
-    Madeira (PT300): DREM series (mean monthly earnings, converted to
-    base-pay-equivalent using the mainland ganho/base ratio from q37/q25).
+    Continental PT: sheet q37 of the DGCP/MTSSS series (ganho directly).
+    Madeira (PT300): DREM series (ganho directly — same concept).
+    Annual = monthly × 14 (12 + holiday + Christmas subsidies).
     """
     xls_url = ("https://www.dgcp.mtsss.gov.pt/documents/10182/10928/"
                "seriesqp_2014_2024.xlsx/d0805880-6aef-4eb1-8602-56c1b8a989a1")
@@ -322,8 +322,8 @@ def _fetch_pt_wages_qp() -> pd.DataFrame:
         resp.raise_for_status()
         xls_path.write_bytes(resp.content)
 
-    # --- Continental: base pay from q25 ---
-    df = pd.read_excel(xls_path, sheet_name='q25', header=None)
+    # --- Continental: ganho from q37 ---
+    df = pd.read_excel(xls_path, sheet_name='q37', header=None)
     years = [int(df.iloc[3, c]) for c in range(1, df.shape[1]) if pd.notna(df.iloc[3, c])]
 
     records = []
@@ -341,46 +341,14 @@ def _fetch_pt_wages_qp() -> pd.DataFrame:
                     'avg_annual_wage': float(val) * 14,
                 })
 
-    # --- Madeira: ganho from DREM, converted to base-pay-equivalent ---
-    records.extend(_fetch_madeira_wages_drem(xls_path, years))
+    # --- Madeira: ganho from DREM (same concept, no conversion needed) ---
+    records.extend(_fetch_madeira_wages_drem(years))
 
     return pd.DataFrame(records)
 
 
-def _fetch_madeira_wages_drem(mainland_xls: Path, mainland_years: list[int]) -> list[dict]:
-    """Madeira wages from DREM Quadros de Pessoal (ganho → base-pay-equivalent).
-
-    The Madeira regional stats office publishes mean monthly earnings ("ganho")
-    but not base pay ("remuneração base").
-    Ganho = base + meal subsidy + shift pay + regular bonuses + overtime.
-    We convert using the mainland ganho/base ratio (q37/q25),
-    which is ~1.20 and remarkably stable across years and regions (σ ≈ 0.004).
-    """
-    # Compute per-year ganho/base ratio from mainland totals
-    try:
-        q25 = pd.read_excel(mainland_xls, sheet_name='q25', header=None)
-        q37 = pd.read_excel(mainland_xls, sheet_name='q37', header=None)
-    except Exception:
-        return []
-
-    base_years = [int(q25.iloc[3, c]) for c in range(1, q25.shape[1])
-                  if pd.notna(q25.iloc[3, c])]
-    ganho_years = [int(q37.iloc[3, c]) for c in range(1, q37.shape[1])
-                   if pd.notna(q37.iloc[3, c])]
-
-    # "Total" row is the first data row (row 4) in both sheets
-    ratio_by_year = {}
-    for j, yr in enumerate(base_years):
-        base_val = q25.iloc[4, j + 1]
-        if yr in ganho_years and pd.notna(base_val):
-            gj = ganho_years.index(yr)
-            ganho_val = q37.iloc[4, gj + 1]
-            if pd.notna(ganho_val) and float(base_val) > 0:
-                ratio_by_year[yr] = float(ganho_val) / float(base_val)
-    mean_ratio = (sum(ratio_by_year.values()) / len(ratio_by_year)
-                  if ratio_by_year else 1.20)
-
-    # Fetch Madeira data
+def _fetch_madeira_wages_drem(mainland_years: list[int]) -> list[dict]:
+    """Madeira wages from DREM Quadros de Pessoal (ganho × 14, same concept as mainland q37)."""
     drem_url = ("https://estatistica.madeira.gov.pt/download-now/social/"
                 "merctrab-pt/2015-11-19-16-43-36/serie-retrospetiva-quadro-pessoal/"
                 "send/464-quadros-de-pessoal-serie-retrospetiva/"
@@ -408,17 +376,14 @@ def _fetch_madeira_wages_drem(mainland_xls: Path, mainland_years: list[int]) -> 
             continue
         ganho = drem.iloc[5, j + 3]
         if pd.notna(ganho):
-            r = ratio_by_year.get(yr, mean_ratio)
-            base_equiv = float(ganho) / r
             records.append({
                 'nuts3': 'PT300',
                 'year': yr,
-                'avg_annual_wage': base_equiv * 14,
+                'avg_annual_wage': float(ganho) * 14,
             })
 
     if records:
-        print(f"  Madeira: {len(records)} years from DREM "
-              f"(ganho÷{mean_ratio:.3f} → base-pay-equivalent)")
+        print(f"  Madeira: {len(records)} years from DREM (ganho × 14)")
     return records
 
 

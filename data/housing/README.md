@@ -55,7 +55,7 @@ summary CSV + data-sources CSV. With `--map`, one choropleth per country
 
 | Country | Prices | Wages | Employment / Area |
 |---|---|---|---|
-| **PT** | INE 0012235 (median transaction €/m²) | MTSS Quadros de Pessoal (base pay × 14); Madeira from DREM (ganho ÷ 1.20 → base-equivalent) | Eurostat |
+| **PT** | INE 0012235 (median transaction €/m²) | MTSS Quadros de Pessoal (ganho × 14); Madeira from DREM (same concept) | Eurostat |
 | **ES** | Registradores de España (mean transaction €/m²) | AEAT tax returns (mean annual salary); Basque Country + Navarra fall back to Eurostat NUTS-2 | Eurostat |
 | **FR** | DVF open data (median transaction €/m²) | INSEE DADS/DSN (gross annual salary EQTP) | Eurostat |
 | **NL** | CBS StatLine (mean transaction €/m²) | CBS 85924NED (compensation / employees) | Eurostat |
