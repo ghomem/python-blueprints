@@ -1640,18 +1640,29 @@ _MAINLAND_BBOX = {
 }
 
 
+_NUTS3_GEOJSON = "NUTS_RG_10M_2024_4326_LEVL_3.geojson"
+
+
 def _fetch_nuts3_geometry():
     """Download (and cache) NUTS-3 boundaries from Eurostat GISCO (NUTS 2024)."""
-    geojson_path = Path(tempfile.gettempdir()) / "NUTS_RG_10M_2024_4326_LEVL_3.geojson"
-    if not geojson_path.exists():
+    import geopandas as gpd
+    local = INPUT_DIR / _NUTS3_GEOJSON if INPUT_DIR else None
+    if local and local.exists():
+        print(f"  [local] {local}")
+        return gpd.read_file(local)
+    cache = Path(tempfile.gettempdir()) / _NUTS3_GEOJSON
+    if not cache.exists():
         url = ("https://gisco-services.ec.europa.eu/distribution/v2/nuts/"
-               "geojson/NUTS_RG_10M_2024_4326_LEVL_3.geojson")
+               "geojson/" + _NUTS3_GEOJSON)
         print("[+] Downloading NUTS-3 boundaries (GISCO)...", flush=True)
         resp = requests.get(url, timeout=60)
         resp.raise_for_status()
-        geojson_path.write_bytes(resp.content)
-    import geopandas as gpd
-    return gpd.read_file(geojson_path)
+        cache.write_bytes(resp.content)
+    if SAVE_MODE and local:
+        import shutil
+        shutil.copy2(cache, local)
+        print(f"  [saved] {local}")
+    return gpd.read_file(cache)
 
 
 def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
