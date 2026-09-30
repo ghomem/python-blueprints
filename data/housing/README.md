@@ -25,6 +25,9 @@ python3 density_vs_price.py 2023 --local-data --metric all --highlight-outliers 
 
 # Tourism intensity overlay (2023 only - NUTS code alignment constraint)
 python3 density_vs_price.py 2023 --local-data --tourism
+
+# Same as above plus per-country map
+python3 density_vs_price.py 2023 --local-data --tourism --map
 ```
 
 ### Options
