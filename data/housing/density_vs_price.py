@@ -1627,6 +1627,64 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
 
 # ---------------------------------------------------------------------------
+# Tourism correlation scatter — metric vs nights/worker
+# ---------------------------------------------------------------------------
+
+
+def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
+                         output_file: str, metric: str = 'effort'):
+    """Scatter of a housing metric (Y) vs tourism intensity (X), all countries."""
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
+
+    mc = METRIC_CONFIG[metric]
+    y_col = mc['y_col']
+
+    all_x, all_y = [], []
+    for cc, df in datasets:
+        sub = df.dropna(subset=['nights_per_worker', y_col])
+        if sub.empty:
+            continue
+        x = sub['nights_per_worker'].values
+        y = sub[y_col].values
+        color = COUNTRY_COLORS.get(cc, '#d95f02')
+        ax.scatter(x, y, s=60, alpha=0.7, color=color, edgecolors='white',
+                   linewidth=0.5, label=cc)
+        for _, row in sub.iterrows():
+            ax.annotate(row['name'], (row['nights_per_worker'], row[y_col]),
+                        fontsize=6, alpha=0.6, xytext=(4, 4),
+                        textcoords='offset points')
+        all_x.extend(x)
+        all_y.extend(y)
+
+    if len(all_x) > 2:
+        all_x = np.array(all_x)
+        all_y = np.array(all_y)
+        coeffs = np.polyfit(all_x, all_y, 1)
+        x_line = np.linspace(all_x.min(), all_x.max(), 200)
+        ax.plot(x_line, np.polyval(coeffs, x_line), '--', color='#666666',
+                alpha=0.5, linewidth=1.5)
+        ss_res = np.sum((all_y - np.polyval(coeffs, all_x)) ** 2)
+        ss_tot = np.sum((all_y - all_y.mean()) ** 2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else None
+        if r2 is not None:
+            ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ (linear fit)',
+                    transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
+                    bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+
+    ax.set_xlabel('Tourist nights / worker / year', fontsize=12)
+    ax.set_ylabel(mc['ylabel'], fontsize=12)
+    tag = '_'.join(cc for cc, _ in datasets)
+    ax.set_title(f'Tourism Intensity vs {mc["title"]} — {tag} NUTS-3 ({year})',
+                 fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[+] Tourism scatter saved to: {output_file}")
+
+
+# ---------------------------------------------------------------------------
 # Choropleth map — NUTS-3 regions coloured by metric value
 # ---------------------------------------------------------------------------
 
@@ -1850,6 +1908,9 @@ def main():
             stats = plot_scatter(
                 df, country, use_year, out, metric=metric, outliers=outliers,
                 tourism=args.tourism)
+            if args.tourism and 'nights_per_worker' in df.columns:
+                tout = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}.png")
+                plot_tourism_scatter([(country, df)], use_year, tout, metric=metric)
             combined.append((country, df))
             summary_rows.append({
                 'metric': metric, 'scope': country, 'year': use_year,
@@ -1884,6 +1945,10 @@ def main():
             csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
             all_df.to_csv(csv_path, index=False, float_format='%.2f')
             print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
+
+        if args.tourism and combined:
+            tout = str(out_dir / f"tourism_vs_{slug}_{year}.png")
+            plot_tourism_scatter(combined, year, tout, metric=metric)
 
     if args.map and country_data:
         # Compute PT+ES effort range for colour scale calibration
