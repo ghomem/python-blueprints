@@ -1632,7 +1632,8 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
 
 def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
-                         output_file: str, metric: str = 'effort'):
+                         output_file: str, metric: str = 'effort',
+                         outliers: str | None = None):
     """Scatter of a housing metric (Y) vs tourism intensity (X), all countries."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
@@ -1640,22 +1641,34 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
     mc = METRIC_CONFIG[metric]
     y_col = mc['y_col']
 
-    all_x, all_y = [], []
+    all_x, all_y, n_outliers = [], [], 0
     for cc, df in datasets:
         sub = df.dropna(subset=['nights_per_worker', y_col])
         if sub.empty:
             continue
-        x = sub['nights_per_worker'].values
-        y = sub[y_col].values
+        # Detect outliers on the density-vs-metric axes (same as main scatter)
+        is_out = _detect_outliers(sub['jobs_per_km2'].values,
+                                  sub[y_col].values) if outliers else np.zeros(len(sub), dtype=bool)
+        n_outliers += int(is_out.sum())
+
         color = COUNTRY_COLORS.get(cc, '#d95f02')
-        ax.scatter(x, y, s=60, alpha=0.7, color=color, edgecolors='white',
-                   linewidth=0.5, label=cc)
-        for _, row in sub.iterrows():
+        show = sub[~is_out] if outliers == 'exclude' else sub
+        ax.scatter(show['nights_per_worker'], show[y_col], s=60, alpha=0.7,
+                   color=color, edgecolors='white', linewidth=0.5, label=cc)
+
+        if outliers == 'highlight' and is_out.any():
+            out_df = sub[is_out]
+            ax.scatter(out_df['nights_per_worker'], out_df[y_col], s=60,
+                       facecolors='none', edgecolors='red', linewidth=0.5, zorder=4)
+
+        for _, row in show.iterrows():
             ax.annotate(row['name'], (row['nights_per_worker'], row[y_col]),
                         fontsize=6, alpha=0.6, xytext=(4, 4),
                         textcoords='offset points')
-        all_x.extend(x)
-        all_y.extend(y)
+
+        fit_sub = sub[~is_out] if outliers else sub
+        all_x.extend(fit_sub['nights_per_worker'].values)
+        all_y.extend(fit_sub[y_col].values)
 
     if len(all_x) > 2:
         all_x = np.array(all_x)
@@ -1667,8 +1680,11 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
         ss_res = np.sum((all_y - np.polyval(coeffs, all_x)) ** 2)
         ss_tot = np.sum((all_y - all_y.mean()) ** 2)
         r2 = 1 - ss_res / ss_tot if ss_tot > 0 else None
+        r2_label = 'linear fit'
+        if outliers and n_outliers:
+            r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
         if r2 is not None:
-            ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ (linear fit)',
+            ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ ({r2_label})',
                     transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
                     bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
@@ -1910,7 +1926,8 @@ def main():
                 tourism=args.tourism)
             if args.tourism and 'nights_per_worker' in df.columns:
                 tout = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}.png")
-                plot_tourism_scatter([(country, df)], use_year, tout, metric=metric)
+                plot_tourism_scatter([(country, df)], use_year, tout,
+                                     metric=metric, outliers=outliers)
             combined.append((country, df))
             summary_rows.append({
                 'metric': metric, 'scope': country, 'year': use_year,
@@ -1948,7 +1965,8 @@ def main():
 
         if args.tourism and combined:
             tout = str(out_dir / f"tourism_vs_{slug}_{year}.png")
-            plot_tourism_scatter(combined, year, tout, metric=metric)
+            plot_tourism_scatter(combined, year, tout, metric=metric,
+                                 outliers=outliers)
 
     if args.map and country_data:
         # Compute PT+ES effort range for colour scale calibration
