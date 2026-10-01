@@ -25,6 +25,26 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
+INPUT_DIR: Path | None = None
+SAVE_MODE: bool = False
+
+
+def _save_csv(df: pd.DataFrame, name: str):
+    if SAVE_MODE and INPUT_DIR and not df.empty:
+        path = INPUT_DIR / name
+        df.to_csv(path, index=False)
+        print(f"  [saved] {path}")
+
+
+def _load_csv(name: str) -> pd.DataFrame | None:
+    if INPUT_DIR is None or SAVE_MODE:
+        return None
+    path = INPUT_DIR / name
+    if path.exists():
+        print(f"  [local] {path}")
+        return pd.read_csv(path)
+    return None
+
 
 def fetch_population(country_code: str, year: int) -> int | None:
     """Fetches national population from Eurostat (demo_r_pjanaggr3)."""
@@ -374,6 +394,52 @@ EU27 = [
 ]
 
 
+def _fetch_gdp_per_capita(year: int) -> dict[str, float]:
+    """Fetch GDP per capita (current EUR) for all countries from Eurostat."""
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/nama_10_pc"
+    params = {
+        "format": "JSON", "lang": "EN",
+        "na_item": "B1GQ",
+        "unit": "CP_EUR_HAB",
+        "sinceTimePeriod": str(year),
+        "untilTimePeriod": str(year),
+    }
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    geo_idx = data['dimension']['geo']['category']['index']
+    values = data['value']
+    result = {}
+    for code, pos in geo_idx.items():
+        if len(code) == 2 and code in EU27:
+            val = values.get(str(pos))
+            if val is not None:
+                result[code] = float(val)
+    return result
+
+
+def _fetch_gini(year: int) -> dict[str, float]:
+    """Fetch Gini coefficient of equivalised disposable income from Eurostat."""
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/ilc_di12"
+    params = {
+        "format": "JSON", "lang": "EN",
+        "sinceTimePeriod": str(year),
+        "untilTimePeriod": str(year),
+    }
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    geo_idx = data['dimension']['geo']['category']['index']
+    values = data['value']
+    result = {}
+    for code, pos in geo_idx.items():
+        if len(code) == 2 and code in EU27:
+            val = values.get(str(pos))
+            if val is not None:
+                result[code] = float(val)
+    return result
+
+
 def _fetch_all_eurostat(dataset: str, **extra_params) -> dict:
     """Single Eurostat API call, returns raw JSON-stat response."""
     url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}"
@@ -507,6 +573,11 @@ def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
 def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
                   compare_year: int | None = None):
     """Compute concentration metrics for all EU-27 countries."""
+    csv_name = f"EU_concentration_{int(target_pct)}pct_{year}.csv"
+    cached = _load_csv(csv_name)
+    if cached is not None:
+        return cached
+
     years = [year]
     if compare_year:
         years.append(compare_year)
@@ -519,11 +590,19 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
     area_data = _fetch_all_eurostat("reg_area3", landuse="L0008")
     area_by_cc = _extract_all_area(area_data)
 
+    print("[+] Fetching GDP per capita...", flush=True)
+    gdp_pc = _fetch_gdp_per_capita(year)
+
+    print("[+] Fetching Gini coefficient...", flush=True)
+    gini = _fetch_gini(year)
+
     emp_by_year = {}
     for yr in years:
         emp_by_year[yr] = _extract_all_nuts3(emp_raw, yr)
 
     df = _compute_concentration(target_pct, emp_by_year[year], area_by_cc, min_regions)
+    df['gdp_per_capita'] = df['country'].map(gdp_pc)
+    df['gini'] = df['country'].map(gini)
 
     if compare_year and compare_year in emp_by_year:
         df_cmp = _compute_concentration(target_pct, emp_by_year[compare_year],
@@ -535,6 +614,7 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
             df['area_pct_cmp'] = df['country'].map(
                 cmp['area_pct']).astype(float)
 
+    _save_csv(df, csv_name)
     return df
 
 
@@ -603,6 +683,80 @@ def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
     plt.savefig(path2, dpi=300)
     plt.close(fig)
     print(f"[+] Area fraction plot saved to: {path2}")
+
+    # Plot 3: GDP per capita vs area concentration (scatter)
+    df3 = df.dropna(subset=['gdp_per_capita', 'area_pct']).copy()
+    if len(df3) >= 3:
+        import numpy as np
+        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+        ax.scatter(df3['area_pct'], df3['gdp_per_capita'] / 1000,
+                   s=60, color='#1f77b4', edgecolors='white', linewidth=0.5, zorder=5)
+        for _, row in df3.iterrows():
+            ax.annotate(row['country'],
+                        (row['area_pct'], row['gdp_per_capita'] / 1000),
+                        textcoords='offset points', xytext=(6, 4),
+                        fontsize=8, fontweight='bold', color='#333333')
+        x = df3['area_pct'].values
+        y = df3['gdp_per_capita'].values / 1000
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() >= 3:
+            coeffs = np.polyfit(x[mask], y[mask], 1)
+            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
+                     np.sum((y[mask] - y[mask].mean())**2)
+            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
+            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
+                    linewidth=1.5, alpha=0.7)
+            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
+                    transform=ax.transAxes, fontsize=11,
+                    verticalalignment='top', color='#d62728')
+        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
+                      fontsize=11, labelpad=10)
+        ax.set_ylabel('GDP per capita (thousand EUR)', fontsize=11, labelpad=10)
+        ax.set_title(f'Spatial concentration of employment vs GDP per capita ({year})',
+                     fontsize=13, fontweight='bold', pad=15)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        path3 = out_dir / f"EU_gdp_vs_area{int(target_pct)}pct_{year}.png"
+        plt.savefig(path3, dpi=300)
+        plt.close(fig)
+        print(f"[+] GDP vs concentration scatter saved to: {path3}")
+
+    # Plot 4: Gini vs area concentration (scatter)
+    df4 = df.dropna(subset=['gini', 'area_pct']).copy()
+    if len(df4) >= 3:
+        import numpy as np
+        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+        ax.scatter(df4['area_pct'], df4['gini'],
+                   s=60, color='#2ca02c', edgecolors='white', linewidth=0.5, zorder=5)
+        for _, row in df4.iterrows():
+            ax.annotate(row['country'],
+                        (row['area_pct'], row['gini']),
+                        textcoords='offset points', xytext=(6, 4),
+                        fontsize=8, fontweight='bold', color='#333333')
+        x = df4['area_pct'].values
+        y = df4['gini'].values
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() >= 3:
+            coeffs = np.polyfit(x[mask], y[mask], 1)
+            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
+                     np.sum((y[mask] - y[mask].mean())**2)
+            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
+            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
+                    linewidth=1.5, alpha=0.7)
+            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
+                    transform=ax.transAxes, fontsize=11,
+                    verticalalignment='top', color='#d62728')
+        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
+                      fontsize=11, labelpad=10)
+        ax.set_ylabel('Gini coefficient', fontsize=11, labelpad=10)
+        ax.set_title(f'Spatial concentration of employment vs income inequality ({year})',
+                     fontsize=13, fontweight='bold', pad=15)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        path4 = out_dir / f"EU_gini_vs_area{int(target_pct)}pct_{year}.png"
+        plt.savefig(path4, dpi=300)
+        plt.close(fig)
+        print(f"[+] Gini vs concentration scatter saved to: {path4}")
 
 
 def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]:
@@ -942,6 +1096,10 @@ def main():
                            help="Baseline year for trend (default: 2000). Avoid crisis "
                                 "troughs (2009-2012) — they inflate concentration "
                                 "artificially, understating the real trend.")
+    eu_parser.add_argument("--save-data", metavar="DIR", nargs="?", const="input",
+                           help="Save fetched data as CSV (default dir: input/)")
+    eu_parser.add_argument("--local-data", metavar="DIR", nargs="?", const="input",
+                           help="Read from local CSV instead of fetching")
 
     region_parser = subparsers.add_parser("region", help="Time series for a single NUTS-3 region")
     region_parser.add_argument("nuts3", type=str, help="NUTS-3 code (e.g. PT1A0, ES300, DE600)")
@@ -1010,6 +1168,17 @@ def main():
         return
 
     if args.mode == 'eu':
+        global INPUT_DIR, SAVE_MODE
+        if getattr(args, 'local_data', None):
+            INPUT_DIR = Path(args.local_data)
+            if not INPUT_DIR.is_dir():
+                parser.error(f"--local-data directory does not exist: {INPUT_DIR}")
+            print(f"[*] Using local data from {INPUT_DIR}/")
+        elif getattr(args, 'save_data', None):
+            INPUT_DIR = Path(args.save_data)
+            INPUT_DIR.mkdir(parents=True, exist_ok=True)
+            SAVE_MODE = True
+            print(f"[*] Will save data to {INPUT_DIR}/")
         df = eu_comparison(args.pct, args.year, min_regions=args.min_regions,
                            compare_year=args.compare_year)
         if df.empty:
