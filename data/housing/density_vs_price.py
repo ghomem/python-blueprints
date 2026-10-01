@@ -1248,25 +1248,39 @@ COUNTRY_COLORS = {
 }
 
 DATA_SOURCES = {
+    'ALL': {
+        'geometry':   ('Eurostat GISCO NUTS-3 boundaries (NUTS 2024; 1:10M)',
+                       'https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_10M_2024_4326_LEVL_3.geojson'),
+    },
     'PT': {
         'prices':     ('INE PT 0012235 — median transaction price',
                        'https://www.ine.pt/xportal/xmain?xpid=INE&xpgid=ine_indicadores&indOcorrCod=0012235'),
-        'wages':      ('MTSS Quadros de Pessoal — monthly base pay × 14',
+        'wages':      ('MTSS Quadros de Pessoal q37 — ganho (mean monthly earnings) × 14',
                        'https://www.dgcp.mtsss.gov.pt/documents/10182/10928/seriesqp_2014_2024.xlsx'),
+        'wages_madeira': ('DREM Quadros de Pessoal — ganho × 14 (Madeira; same concept)',
+                          'https://estatistica.madeira.gov.pt/'),
+        'wages_eurostat': ('Eurostat nama_10r_2coe / nama_10r_2empers — NUTS-2 fallback (Açores)',
+                           'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_2coe/'),
         'employment': ('Eurostat nama_10r_3empers',
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
         'area':       ('Eurostat reg_area3',
                        'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+        'tourism':    ('Eurostat tour_occ_nin2 — tourist nights by NUTS-3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/'),
     },
     'ES': {
         'prices':     ('Registradores de España — mean transaction price',
                        'https://www.registradores.org/actualidad/portal-estadistico-registral/estadisticas-de-propiedad/evolucion-precio-medio-m2'),
         'wages':      ('Agencia Tributaria — salario medio anual (IRPF)',
                        'https://sede.agenciatributaria.gob.es/AEAT/Contenidos_Comunes/La_Agencia_Tributaria/Estadisticas/Publicaciones/sites/mercado/2023/'),
+        'wages_eurostat': ('Eurostat nama_10r_2coe / nama_10r_2empers — NUTS-2 fallback (Basque+Navarra)',
+                           'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_2coe/'),
         'employment': ('Eurostat nama_10r_3empers',
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
         'area':       ('Eurostat reg_area3',
                        'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+        'tourism':    ('Eurostat tour_occ_nin2 — tourist nights by NUTS-3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/'),
     },
     'FR': {
         'prices':     ('DVF — median transaction price (monthly → annual)',
@@ -1277,6 +1291,8 @@ DATA_SOURCES = {
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
         'area':       ('Eurostat reg_area3',
                        'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+        'tourism':    ('Eurostat tour_occ_nin2 — tourist nights by NUTS-3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/'),
     },
     'NL': {
         'prices':     ('CBS 85036NED WOZ / 83704NED floor area',
@@ -1287,6 +1303,8 @@ DATA_SOURCES = {
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
         'area':       ('Eurostat reg_area3',
                        'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+        'tourism':    ('Eurostat tour_occ_nin2 — tourist nights by NUTS-3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/'),
     },
 }
 
@@ -1957,7 +1975,7 @@ def main():
 
         countries_used = [cc for cc, _, _ in country_data]
         source_rows = []
-        for cc in countries_used:
+        for cc in ['ALL'] + countries_used:
             for dtype, (desc, url) in DATA_SOURCES.get(cc, {}).items():
                 source_rows.append({
                     'country': cc, 'data_type': dtype,
