@@ -1407,7 +1407,7 @@ def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def _fit_log_trend(ax, x, y, exclude_mask=None):
-    """Fit y = a*ln(x) + b, plot the line, return R².
+    """Fit y = a*ln(x) + b, plot the line, return (R², a, b, RMSE) or None.
 
     If exclude_mask is given, those points are ignored for the fit and R²
     but the trend line spans the full x-range.
@@ -1423,9 +1423,12 @@ def _fit_log_trend(ax, x, y, exclude_mask=None):
     x_smooth = np.geomspace(x_all.min(), x_all.max(), 200)
     y_smooth = coeffs[0] * np.log(x_smooth) + coeffs[1]
     ax.plot(x_smooth, y_smooth, '--', color='#666666', alpha=0.5, linewidth=1.5, zorder=2)
-    ss_res = np.sum((y[mask] - (coeffs[0] * log_x + coeffs[1])) ** 2)
+    residuals = y[mask] - (coeffs[0] * log_x + coeffs[1])
+    ss_res = np.sum(residuals ** 2)
     ss_tot = np.sum((y[mask] - y[mask].mean()) ** 2)
-    return 1 - ss_res / ss_tot
+    r2 = 1 - ss_res / ss_tot
+    rmse = np.sqrt(ss_res / mask.sum())
+    return r2, coeffs[0], coeffs[1], rmse
 
 
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
@@ -1481,12 +1484,17 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
         cbar = fig.colorbar(sm, ax=ax, location='left', pad=0.08, shrink=0.7)
         cbar.set_label('Tourist nights / worker / year', fontsize=10, labelpad=10)
 
-    r2 = _fit_log_trend(ax, x_vals, y_vals, exclude_mask=is_outlier if outliers else None)
-    r2_label = 'log fit'
-    if outliers and n_outliers:
-        r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
-    if r2 is not None:
-        ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ ({r2_label})',
+    fit = _fit_log_trend(ax, x_vals, y_vals, exclude_mask=is_outlier if outliers else None)
+    r2 = None
+    if fit is not None:
+        r2, a, b, rmse = fit
+        sign = '+' if b >= 0 else '−'
+        eq_label = f'$y = {a:.3f} \\ln(x) {sign} {abs(b):.3f}$'
+        r2_label = 'log fit'
+        if outliers and n_outliers:
+            r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
+        ax.text(0.95, 0.05,
+                f'{eq_label}\n$R^2 = {r2:.3f}$, RMSE $= {rmse:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
 
@@ -1575,16 +1583,21 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
 
         offset += n
 
-    r2 = _fit_log_trend(ax, all_x, all_y, exclude_mask=is_outlier if outliers else None)
+    fit = _fit_log_trend(ax, all_x, all_y, exclude_mask=is_outlier if outliers else None)
+    r2 = None
     r2_label = 'log fit, combined'
     if outliers and n_outliers:
         r2_label += f', excl. {n_outliers} outlier{"s" if n_outliers != 1 else ""}'
     info_y = 0.05
-    if r2 is not None:
-        ax.text(0.95, info_y, f'$R^2 = {r2:.3f}$ ({r2_label})',
+    if fit is not None:
+        r2, a, b, rmse = fit
+        sign = '+' if b >= 0 else '−'
+        eq_label = f'$y = {a:.3f} \\ln(x) {sign} {abs(b):.3f}$'
+        ax.text(0.95, info_y,
+                f'{eq_label}\n$R^2 = {r2:.3f}$, RMSE $= {rmse:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
-        info_y += 0.05
+        info_y += 0.08
     if tourism:
         ax.text(0.95, info_y,
                 f'Saturation = tourism intensity (0–{TOURISM_NPW_CAP} nights/worker/year)',
