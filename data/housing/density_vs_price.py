@@ -105,13 +105,13 @@ NL housing prices:
     https://opendata.cbs.nl/ODataApi/OData/83704NED
 
 Note on comparability:
-    PT (primary, 0012235), ES (primary, Registradores), and FR use actual transaction
-    prices from official records. PT (fallback, 0012256) and ES (fallback, Ministerio)
-    use professional property valuations for mortgage purposes.
-    NL uses WOZ (property tax valuation) divided by estimated average floor area —
-    an approximation of €/m², systematically lower than market values (WOZ lags
-    the market and is capped for tax purposes). NL figures are therefore not
-    directly comparable in absolute level, but the spatial variation is meaningful.
+    PT (0012235), ES (Registradores), and FR (DVF) use actual transaction prices
+    from official records. NL uses WOZ (property tax valuation) divided by
+    estimated average floor area — an approximation of €/m², systematically lower
+    than market values (WOZ lags the market and is capped for tax purposes).
+    NL figures are therefore not directly comparable in absolute level, but the
+    spatial variation is meaningful. The fallback sources documented above (PT
+    0012256, ES Ministerio) are not used in the current code.
 
 Dependencies:
     pip install requests pandas matplotlib numpy xlrd
@@ -124,7 +124,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 import matplotlib.pyplot as plt
-import matplotlib.patheffects as PathEffects
+
 import numpy as np
 import pandas as pd
 import requests
@@ -722,49 +722,6 @@ def fetch_pt_prices() -> pd.DataFrame:
     return df
 
 
-# Fallback: Indicator 0012256 — Median bank appraisal value (€/m²)
-# Source: Inquérito à Avaliação Bancária na Habitação (IABH)
-# Annual from 2011. Covers all housing types (not just apartments).
-# https://www.ine.pt/xportal/xmain?xpid=INE&xpgid=ine_indicadores&indOcorrCod=0012256
-
-def fetch_pt_prices_appraisal() -> pd.DataFrame:
-    """Median bank appraisal value (€/m²) — professional valuations, annual."""
-    print("[+] Fetching PT appraisal prices (INE 0012256)...", flush=True)
-    url = "https://www.ine.pt/ine/json_indicador/pindica.jsp"
-    params = {"op": "2", "varcd": "0012256", "Dim1": "T", "lang": "EN"}
-    resp = requests.get(url, params=params, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-
-    dados = data[0]['Dados'] if isinstance(data, list) else data.get('Dados', {})
-
-    records = []
-    for year_str, entries in dados.items():
-        if not isinstance(entries, list):
-            continue
-        try:
-            year = int(year_str)
-        except ValueError:
-            continue
-
-        for entry in entries:
-            geocod = entry.get('geocod', '')
-            if len(geocod) != 3 or entry.get('dim_3') != 'T':
-                continue
-            valor = entry.get('valor')
-            if not valor:
-                continue
-            try:
-                records.append({
-                    'nuts3': 'PT' + geocod,
-                    'year': year,
-                    'price_eur_m2': float(valor),
-                })
-            except (ValueError, TypeError):
-                continue
-
-    return pd.DataFrame(records)
-
 
 # ---------------------------------------------------------------------------
 # Housing price: Spain (Registradores de la Propiedad — transaction prices)
@@ -846,89 +803,6 @@ def fetch_es_prices() -> pd.DataFrame:
     _save_df(df, 'ES', 'prices')
     return df
 
-
-# ---------------------------------------------------------------------------
-# Housing price: Spain — fallback (Ministerio de Transportes XLS)
-# "Valor tasado medio de vivienda libre" — mean appraised value (€/m²)
-# Source: regulated appraisal companies (Order EHA/3011/2007), >100k appraisals/quarter
-# Data: https://apps.fomento.gob.es/BoletinOnline2/sedal/35101000.XLS
-# Methodology: https://www.transportes.gob.es/recursos_mfom/pdf/B0E2BE62-28EF-41A8-B9D4-CCBD92A28643/144522/MetodValorVivienda.pdf
-# ---------------------------------------------------------------------------
-
-ES_PROVINCE_TO_NUTS3 = {
-    'Almería': 'ES611', 'Cádiz': 'ES612', 'Córdoba': 'ES613',
-    'Granada': 'ES614', 'Huelva': 'ES615', 'Jaén': 'ES616',
-    'Málaga': 'ES617', 'Sevilla': 'ES618',
-    'Huesca': 'ES241', 'Teruel': 'ES242', 'Zaragoza': 'ES243',
-    'Asturias (Principado de )': 'ES120',
-    'Balears (Illes)': 'ES530',
-    'Palmas (Las)': 'ES701', 'Santa Cruz de Tenerife': 'ES702',
-    'Cantabria': 'ES130',
-    'Ávila': 'ES411', 'Burgos': 'ES412', 'León': 'ES413',
-    'Palencia': 'ES414', 'Salamanca': 'ES415', 'Segovia': 'ES416',
-    'Soria': 'ES417', 'Valladolid': 'ES418', 'Zamora': 'ES419',
-    'Albacete': 'ES421', 'Ciudad Real': 'ES422', 'Cuenca': 'ES423',
-    'Guadalajara': 'ES424', 'Toledo': 'ES425',
-    'Barcelona': 'ES511', 'Girona': 'ES512', 'Lleida': 'ES513',
-    'Tarragona': 'ES514',
-    'Alicante/Alacant': 'ES521', 'Castellón/Castelló': 'ES522',
-    'Valencia/València': 'ES523',
-    'Badajoz': 'ES431', 'Cáceres': 'ES432',
-    'Coruña (A)': 'ES111', 'Lugo': 'ES112',
-    'Ourense': 'ES113', 'Pontevedra': 'ES114',
-    'Madrid (Comunidad de)': 'ES300',
-    'Murcia (Región de)': 'ES620',
-    'Navarra (Comunidad Foral de)': 'ES220',
-    'Araba/Alava': 'ES211', 'Gipuzkoa': 'ES212', 'Bizkaia': 'ES213',
-    'Rioja (La)': 'ES230',
-    'Ceuta': 'ES630', 'Melilla': 'ES640',
-}
-
-
-def fetch_es_prices_appraisal() -> pd.DataFrame:
-    """Mean appraised value (€/m²) — professional valuations, quarterly."""
-    print("[+] Fetching ES appraisal prices (Ministerio)...", flush=True)
-    xls_url = "https://apps.fomento.gob.es/BoletinOnline2/sedal/35101000.XLS"
-    xls_path = Path(tempfile.gettempdir()) / "es_housing_prices.XLS"
-
-    if not xls_path.exists():
-        resp = requests.get(xls_url, timeout=60)
-        resp.raise_for_status()
-        xls_path.write_bytes(resp.content)
-
-    xls = pd.ExcelFile(xls_path)
-    records = []
-
-    for sheet_name in xls.sheet_names:
-        df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
-
-        # Extract the 4 years from the header row (row 11 typically)
-        years = []
-        for col in range(df.shape[1]):
-            cell = df.iloc[11, col] if 11 < df.shape[0] else None
-            if isinstance(cell, str) and cell.startswith('Año'):
-                years.append((col, int(cell.split()[-1])))
-
-        for _, row in df.iloc[14:].iterrows():
-            province = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ''
-            nuts3 = ES_PROVINCE_TO_NUTS3.get(province)
-            if not nuts3:
-                continue
-
-            for start_col, year in years:
-                # Q4 column is start_col + 3
-                q4_val = row.iloc[start_col + 3] if start_col + 3 < len(row) else None
-                if pd.notna(q4_val):
-                    try:
-                        records.append({
-                            'nuts3': nuts3,
-                            'year': year,
-                            'price_eur_m2': float(q4_val),
-                        })
-                    except (ValueError, TypeError):
-                        continue
-
-    return pd.DataFrame(records)
 
 
 # ---------------------------------------------------------------------------
