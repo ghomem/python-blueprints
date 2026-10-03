@@ -440,6 +440,29 @@ def _fetch_gini(year: int) -> dict[str, float]:
     return result
 
 
+def _fetch_fertility(year: int) -> dict[str, float]:
+    """Fetch total fertility rate from Eurostat (demo_frate)."""
+    url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/demo_frate"
+    params = {
+        "format": "JSON", "lang": "EN",
+        "age": "TOTAL",
+        "sinceTimePeriod": str(year),
+        "untilTimePeriod": str(year),
+    }
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    geo_idx = data['dimension']['geo']['category']['index']
+    values = data['value']
+    result = {}
+    for code, pos in geo_idx.items():
+        if len(code) == 2 and code in EU27:
+            val = values.get(str(pos))
+            if val is not None:
+                result[code] = float(val)
+    return result
+
+
 def _fetch_all_eurostat(dataset: str, **extra_params) -> dict:
     """Single Eurostat API call, returns raw JSON-stat response."""
     url = f"https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/{dataset}"
@@ -596,6 +619,9 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
     print("[+] Fetching Gini coefficient...", flush=True)
     gini = _fetch_gini(year)
 
+    print("[+] Fetching fertility rate...", flush=True)
+    fertility = _fetch_fertility(year)
+
     emp_by_year = {}
     for yr in years:
         emp_by_year[yr] = _extract_all_nuts3(emp_raw, yr)
@@ -603,6 +629,7 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
     df = _compute_concentration(target_pct, emp_by_year[year], area_by_cc, min_regions)
     df['gdp_per_capita'] = df['country'].map(gdp_pc)
     df['gini'] = df['country'].map(gini)
+    df['fertility'] = df['country'].map(fertility)
 
     if compare_year and compare_year in emp_by_year:
         df_cmp = _compute_concentration(target_pct, emp_by_year[compare_year],
@@ -757,6 +784,46 @@ def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
         plt.savefig(path4, dpi=300)
         plt.close(fig)
         print(f"[+] Gini vs concentration scatter saved to: {path4}")
+
+    # Plot 5: Fertility vs area concentration (scatter)
+    df5 = df.dropna(subset=['fertility', 'area_pct']).copy()
+    if len(df5) >= 3:
+        import numpy as np
+        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+        ax.scatter(df5['area_pct'], df5['fertility'],
+                   s=60, color='#9467bd', edgecolors='white', linewidth=0.5, zorder=5)
+        for _, row in df5.iterrows():
+            ax.annotate(row['country'],
+                        (row['area_pct'], row['fertility']),
+                        textcoords='offset points', xytext=(6, 4),
+                        fontsize=8, fontweight='bold', color='#333333')
+        x = df5['area_pct'].values
+        y = df5['fertility'].values
+        mask = np.isfinite(x) & np.isfinite(y)
+        if mask.sum() >= 3:
+            coeffs = np.polyfit(x[mask], y[mask], 1)
+            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
+                     np.sum((y[mask] - y[mask].mean())**2)
+            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
+            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
+                    linewidth=1.5, alpha=0.7)
+            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
+                    transform=ax.transAxes, fontsize=11,
+                    verticalalignment='top', color='#d62728')
+        ax.axhline(y=2.1, color='#999999', linestyle=':', linewidth=1, alpha=0.6)
+        ax.text(0.97, 2.12, 'replacement level', fontsize=8, ha='right',
+                color='#999999', style='italic')
+        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
+                      fontsize=11, labelpad=10)
+        ax.set_ylabel('Total fertility rate', fontsize=11, labelpad=10)
+        ax.set_title(f'Spatial concentration of employment vs fertility rate ({year})',
+                     fontsize=13, fontweight='bold', pad=15)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        path5 = out_dir / f"EU_fertility_vs_area{int(target_pct)}pct_{year}.png"
+        plt.savefig(path5, dpi=300)
+        plt.close(fig)
+        print(f"[+] Fertility vs concentration scatter saved to: {path5}")
 
 
 def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]:
