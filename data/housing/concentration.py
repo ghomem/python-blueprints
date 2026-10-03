@@ -645,185 +645,123 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
     return df
 
 
+def _plot_concentration_scatter(df: pd.DataFrame, target_pct: float, year: int,
+                                out_dir: Path, *, y_col: str, y_label: str,
+                                title_metric: str, color: str, slug: str,
+                                y_scale: float = 1.0,
+                                hline: tuple[float, str] | None = None):
+    """Scatter plot of area concentration vs a country-level indicator."""
+    import numpy as np
+    sub = df.dropna(subset=[y_col, 'area_pct']).copy()
+    if len(sub) < 3:
+        return
+    fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
+    y_vals = sub[y_col].values * y_scale
+    ax.scatter(sub['area_pct'], y_vals,
+               s=60, color=color, edgecolors='white', linewidth=0.5, zorder=5)
+    for _, row in sub.iterrows():
+        ax.annotate(row['country'],
+                    (row['area_pct'], row[y_col] * y_scale),
+                    textcoords='offset points', xytext=(6, 4),
+                    fontsize=8, fontweight='bold', color='#333333')
+    x = sub['area_pct'].values
+    mask = np.isfinite(x) & np.isfinite(y_vals)
+    if mask.sum() >= 3:
+        coeffs = np.polyfit(x[mask], y_vals[mask], 1)
+        r2 = 1 - np.sum((y_vals[mask] - np.polyval(coeffs, x[mask]))**2) / \
+                 np.sum((y_vals[mask] - y_vals[mask].mean())**2)
+        x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
+        ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
+                linewidth=1.5, alpha=0.7)
+        ax.text(0.05, 0.95, f'R² = {r2:.3f}',
+                transform=ax.transAxes, fontsize=11,
+                verticalalignment='top', color='#d62728')
+    if hline:
+        ax.axhline(y=hline[0], color='#999999', linestyle=':', linewidth=1, alpha=0.6)
+        ax.text(0.97, hline[0] + 0.02, hline[1], fontsize=8, ha='right',
+                color='#999999', style='italic', transform=ax.get_yaxis_transform())
+    ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
+                  fontsize=11, labelpad=10)
+    ax.set_ylabel(y_label, fontsize=11, labelpad=10)
+    ax.set_title(f'Spatial concentration of employment vs {title_metric} ({year})',
+                 fontsize=13, fontweight='bold', pad=15)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = out_dir / f"EU_{slug}_vs_area{int(target_pct)}pct_{year}.png"
+    plt.savefig(path, dpi=300)
+    plt.close(fig)
+    print(f"[+] {title_metric.capitalize()} vs concentration scatter saved to: {path}")
+
+
+def _plot_eu_bar(df, target_pct, year, out_dir, *, val_col, cmp_col,
+                 color, y_label, title_tmpl, bar_label_fn, slug,
+                 compare_year=None):
+    """Bar chart of a per-country metric sorted descending, with optional comparison markers."""
+    has_cmp = compare_year and cmp_col in df.columns
+    sub = df.sort_values(val_col, ascending=False).reset_index(drop=True)
+    fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
+    ax.bar(range(len(sub)), sub[val_col], color=color,
+           edgecolor='white', linewidth=0.5)
+    if has_cmp:
+        ax.scatter(range(len(sub)), sub[cmp_col], color='#333333',
+                   marker='_', s=200, linewidths=2, zorder=5, label=str(compare_year))
+    ax.set_xticks(range(len(sub)))
+    ax.set_xticklabels(sub['country'], fontsize=9, fontweight='bold')
+    ax.set_ylabel(y_label, fontsize=11, labelpad=10)
+    ax.set_title(title_tmpl.format(target_pct=target_pct, year=year),
+                 fontsize=13, fontweight='bold', pad=15)
+    for i, row in sub.iterrows():
+        label = bar_label_fn(row)
+        if has_cmp and pd.notna(row.get(cmp_col)):
+            delta = row[val_col] - row[cmp_col]
+            sign = '+' if delta >= 0 else ''
+            label += f"\n{sign}{delta:.1f}pp"
+        ax.text(i, row[val_col] + 0.5, label,
+                ha='center', fontsize=7, color='#333333')
+    if has_cmp:
+        ax.legend(fontsize=10, loc='upper right')
+    fig.tight_layout()
+    path = out_dir / f"EU_target{int(target_pct)}pct_{slug}_{year}.png"
+    plt.savefig(path, dpi=300)
+    plt.close(fig)
+    print(f"[+] {y_label} plot saved to: {path}")
+
+
 def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
                        compare_year: int | None = None):
-    """Two bar charts: region fraction and area fraction to reach target_pct%."""
+    """Bar charts + scatter plots for the EU comparison."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     out_dir = Path(tempfile.gettempdir()) / "concentration"
     out_dir.mkdir(exist_ok=True)
-    has_cmp = compare_year and 'region_fraction_cmp' in df.columns
 
-    # Plot 1: region fraction (n/M)
-    df1 = df.sort_values('region_fraction', ascending=False).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
-    ax.bar(range(len(df1)), df1['region_fraction'], color='#1f77b4',
-           edgecolor='white', linewidth=0.5)
-    if has_cmp:
-        ax.scatter(range(len(df1)), df1['region_fraction_cmp'], color='#333333',
-                   marker='_', s=200, linewidths=2, zorder=5, label=str(compare_year))
-    ax.set_xticks(range(len(df1)))
-    ax.set_xticklabels(df1['country'], fontsize=9, fontweight='bold')
-    ax.set_ylabel('Fraction of NUTS-3 regions (%)', fontsize=11, labelpad=10)
-    title1 = f'Share of NUTS-3 regions needed to reach {target_pct}% of national employment ({year})'
-    ax.set_title(title1, fontsize=13, fontweight='bold', pad=15)
-    for i, row in df1.iterrows():
-        label = f"{int(row['n_required'])}/{int(row['total_regions'])}"
-        if has_cmp and pd.notna(row.get('region_fraction_cmp')):
-            delta = row['region_fraction'] - row['region_fraction_cmp']
-            sign = '+' if delta >= 0 else ''
-            label += f"\n{sign}{delta:.1f}pp"
-        ax.text(i, row['region_fraction'] + 0.5, label,
-                ha='center', fontsize=7, color='#333333')
-    if has_cmp:
-        ax.legend(fontsize=10, loc='upper right')
-    fig.tight_layout()
-    path1 = out_dir / f"EU_target{int(target_pct)}pct_regions_{year}.png"
-    plt.savefig(path1, dpi=300)
-    plt.close(fig)
-    print(f"[+] Region fraction plot saved to: {path1}")
+    _BAR_PLOTS = [
+        {'val_col': 'region_fraction', 'cmp_col': 'region_fraction_cmp',
+         'color': '#1f77b4', 'y_label': 'Fraction of NUTS-3 regions (%)',
+         'title_tmpl': 'Share of NUTS-3 regions needed to reach {target_pct}% of national employment ({year})',
+         'bar_label_fn': lambda row: f"{int(row['n_required'])}/{int(row['total_regions'])}",
+         'slug': 'regions'},
+        {'val_col': 'area_pct', 'cmp_col': 'area_pct_cmp',
+         'color': '#d95f02', 'y_label': 'Country area (%)',
+         'title_tmpl': 'Share of country area covering {target_pct}% of national employment ({year})',
+         'bar_label_fn': lambda row: f"{row['area_pct']:.1f}%",
+         'slug': 'area'},
+    ]
+    for spec in _BAR_PLOTS:
+        _plot_eu_bar(df, target_pct, year, out_dir, compare_year=compare_year,
+                     **spec)
 
-    # Plot 2: area fraction
-    df2 = df.sort_values('area_pct', ascending=False).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
-    ax.bar(range(len(df2)), df2['area_pct'], color='#d95f02',
-           edgecolor='white', linewidth=0.5)
-    if has_cmp:
-        ax.scatter(range(len(df2)), df2['area_pct_cmp'], color='#333333',
-                   marker='_', s=200, linewidths=2, zorder=5, label=str(compare_year))
-    ax.set_xticks(range(len(df2)))
-    ax.set_xticklabels(df2['country'], fontsize=9, fontweight='bold')
-    ax.set_ylabel('Country area (%)', fontsize=11, labelpad=10)
-    title2 = f'Share of country area covering {target_pct}% of national employment ({year})'
-    ax.set_title(title2, fontsize=13, fontweight='bold', pad=15)
-    for i, row in df2.iterrows():
-        label = f"{row['area_pct']:.1f}%"
-        if has_cmp and pd.notna(row.get('area_pct_cmp')):
-            delta = row['area_pct'] - row['area_pct_cmp']
-            sign = '+' if delta >= 0 else ''
-            label += f"\n{sign}{delta:.1f}pp"
-        ax.text(i, row['area_pct'] + 0.5, label,
-                ha='center', fontsize=7, color='#333333')
-    if has_cmp:
-        ax.legend(fontsize=10, loc='upper right')
-    fig.tight_layout()
-    path2 = out_dir / f"EU_target{int(target_pct)}pct_area_{year}.png"
-    plt.savefig(path2, dpi=300)
-    plt.close(fig)
-    print(f"[+] Area fraction plot saved to: {path2}")
-
-    # Plot 3: GDP per capita vs area concentration (scatter)
-    df3 = df.dropna(subset=['gdp_per_capita', 'area_pct']).copy()
-    if len(df3) >= 3:
-        import numpy as np
-        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
-        ax.scatter(df3['area_pct'], df3['gdp_per_capita'] / 1000,
-                   s=60, color='#1f77b4', edgecolors='white', linewidth=0.5, zorder=5)
-        for _, row in df3.iterrows():
-            ax.annotate(row['country'],
-                        (row['area_pct'], row['gdp_per_capita'] / 1000),
-                        textcoords='offset points', xytext=(6, 4),
-                        fontsize=8, fontweight='bold', color='#333333')
-        x = df3['area_pct'].values
-        y = df3['gdp_per_capita'].values / 1000
-        mask = np.isfinite(x) & np.isfinite(y)
-        if mask.sum() >= 3:
-            coeffs = np.polyfit(x[mask], y[mask], 1)
-            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
-                     np.sum((y[mask] - y[mask].mean())**2)
-            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
-            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
-                    linewidth=1.5, alpha=0.7)
-            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
-                    transform=ax.transAxes, fontsize=11,
-                    verticalalignment='top', color='#d62728')
-        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
-                      fontsize=11, labelpad=10)
-        ax.set_ylabel('GDP per capita (thousand EUR)', fontsize=11, labelpad=10)
-        ax.set_title(f'Spatial concentration of employment vs GDP per capita ({year})',
-                     fontsize=13, fontweight='bold', pad=15)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        path3 = out_dir / f"EU_gdp_vs_area{int(target_pct)}pct_{year}.png"
-        plt.savefig(path3, dpi=300)
-        plt.close(fig)
-        print(f"[+] GDP vs concentration scatter saved to: {path3}")
-
-    # Plot 4: Gini vs area concentration (scatter)
-    df4 = df.dropna(subset=['gini', 'area_pct']).copy()
-    if len(df4) >= 3:
-        import numpy as np
-        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
-        ax.scatter(df4['area_pct'], df4['gini'],
-                   s=60, color='#2ca02c', edgecolors='white', linewidth=0.5, zorder=5)
-        for _, row in df4.iterrows():
-            ax.annotate(row['country'],
-                        (row['area_pct'], row['gini']),
-                        textcoords='offset points', xytext=(6, 4),
-                        fontsize=8, fontweight='bold', color='#333333')
-        x = df4['area_pct'].values
-        y = df4['gini'].values
-        mask = np.isfinite(x) & np.isfinite(y)
-        if mask.sum() >= 3:
-            coeffs = np.polyfit(x[mask], y[mask], 1)
-            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
-                     np.sum((y[mask] - y[mask].mean())**2)
-            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
-            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
-                    linewidth=1.5, alpha=0.7)
-            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
-                    transform=ax.transAxes, fontsize=11,
-                    verticalalignment='top', color='#d62728')
-        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
-                      fontsize=11, labelpad=10)
-        ax.set_ylabel('Gini coefficient', fontsize=11, labelpad=10)
-        ax.set_title(f'Spatial concentration of employment vs income inequality ({year})',
-                     fontsize=13, fontweight='bold', pad=15)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        path4 = out_dir / f"EU_gini_vs_area{int(target_pct)}pct_{year}.png"
-        plt.savefig(path4, dpi=300)
-        plt.close(fig)
-        print(f"[+] Gini vs concentration scatter saved to: {path4}")
-
-    # Plot 5: Fertility vs area concentration (scatter)
-    df5 = df.dropna(subset=['fertility', 'area_pct']).copy()
-    if len(df5) >= 3:
-        import numpy as np
-        fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
-        ax.scatter(df5['area_pct'], df5['fertility'],
-                   s=60, color='#9467bd', edgecolors='white', linewidth=0.5, zorder=5)
-        for _, row in df5.iterrows():
-            ax.annotate(row['country'],
-                        (row['area_pct'], row['fertility']),
-                        textcoords='offset points', xytext=(6, 4),
-                        fontsize=8, fontweight='bold', color='#333333')
-        x = df5['area_pct'].values
-        y = df5['fertility'].values
-        mask = np.isfinite(x) & np.isfinite(y)
-        if mask.sum() >= 3:
-            coeffs = np.polyfit(x[mask], y[mask], 1)
-            r2 = 1 - np.sum((y[mask] - np.polyval(coeffs, x[mask]))**2) / \
-                     np.sum((y[mask] - y[mask].mean())**2)
-            x_fit = np.linspace(x[mask].min(), x[mask].max(), 100)
-            ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#d62728',
-                    linewidth=1.5, alpha=0.7)
-            ax.text(0.05, 0.95, f'R² = {r2:.3f}',
-                    transform=ax.transAxes, fontsize=11,
-                    verticalalignment='top', color='#d62728')
-        ax.axhline(y=2.1, color='#999999', linestyle=':', linewidth=1, alpha=0.6)
-        ax.text(0.97, 2.12, 'replacement level', fontsize=8, ha='right',
-                color='#999999', style='italic')
-        ax.set_xlabel(f'Area covering {target_pct}% of employment (%)',
-                      fontsize=11, labelpad=10)
-        ax.set_ylabel('Total fertility rate', fontsize=11, labelpad=10)
-        ax.set_title(f'Spatial concentration of employment vs fertility rate ({year})',
-                     fontsize=13, fontweight='bold', pad=15)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        path5 = out_dir / f"EU_fertility_vs_area{int(target_pct)}pct_{year}.png"
-        plt.savefig(path5, dpi=300)
-        plt.close(fig)
-        print(f"[+] Fertility vs concentration scatter saved to: {path5}")
+    _CORRELATION_PLOTS = [
+        {'y_col': 'gdp_per_capita', 'y_scale': 1/1000, 'y_label': 'GDP per capita (thousand EUR)',
+         'title_metric': 'GDP per capita', 'color': '#1f77b4', 'slug': 'gdp'},
+        {'y_col': 'gini', 'y_label': 'Gini coefficient',
+         'title_metric': 'income inequality', 'color': '#2ca02c', 'slug': 'gini'},
+        {'y_col': 'fertility', 'y_label': 'Total fertility rate',
+         'title_metric': 'fertility rate', 'color': '#9467bd', 'slug': 'fertility',
+         'hline': (2.1, 'replacement level')},
+    ]
+    for spec in _CORRELATION_PLOTS:
+        _plot_concentration_scatter(
+            df, target_pct, year, out_dir, **spec)
 
 
 def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]:
