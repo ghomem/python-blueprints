@@ -599,6 +599,8 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
     csv_name = f"EU_concentration_{int(target_pct)}pct_{year}.csv"
     cached = _load_csv(csv_name)
     if cached is not None:
+        if min_regions > 0:
+            cached = cached[cached['total_regions'] >= min_regions].reset_index(drop=True)
         return cached
 
     years = [year]
