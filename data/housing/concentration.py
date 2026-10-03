@@ -1097,8 +1097,8 @@ def main():
     eu_parser.add_argument("pct", type=float, help="Target employment share (e.g. 50 for 50%%)")
     eu_parser.add_argument("--year", type=int, default=2022,
                            help="Reference year (default: 2022)")
-    eu_parser.add_argument("--min-regions", type=int, default=5,
-                           help="Exclude countries with fewer NUTS-3 regions (default: 5)")
+    eu_parser.add_argument("--min-regions", type=int, default=0,
+                           help="Exclude countries with fewer NUTS-3 regions (default: 0)")
     eu_parser.add_argument("--compare-year", type=int, default=2000,
                            help="Baseline year for trend (default: 2000). Avoid crisis "
                                 "troughs (2009-2012) — they inflate concentration "
@@ -1114,8 +1114,8 @@ def main():
 
     cap_parser = subparsers.add_parser("top",
                                        help="Top-region share trajectories for all EU-27")
-    cap_parser.add_argument("--min-regions", type=int, default=5,
-                            help="Exclude countries with fewer NUTS-3 regions (default: 5)")
+    cap_parser.add_argument("--min-regions", type=int, default=0,
+                            help="Exclude countries with fewer NUTS-3 regions (default: 0)")
 
     list_parser = subparsers.add_parser("list-regions",
                                         help="List all NUTS-3 regions for a country")
