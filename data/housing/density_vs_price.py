@@ -1007,6 +1007,32 @@ def fetch_nl_prices() -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Housing price: Italy (OMI — local data only)
+# ---------------------------------------------------------------------------
+#
+# Source: OMI (Osservatorio del Mercato Immobiliare) via Agenzia delle Entrate.
+# Average appraised quotation (€/m²) per province, aggregated from sub-provincial
+# macro-areas.  NOT transaction prices — comparable to ES Registradores.
+#
+# No public API; data prepared offline from the GitHub compilation at
+# github.com/eugeniodalpozzo/italy_omi_housing_provincial_prices.
+# Requires --local-data with input/IT_prices.csv pre-populated.
+
+LOCAL_ONLY_COUNTRIES = {'IT'}
+
+
+def fetch_it_prices() -> pd.DataFrame:
+    """Load Italian OMI housing prices from local CSV."""
+    local = _load_df('IT', 'prices')
+    if local is not None:
+        return local
+    raise SystemExit(
+        "IT requires --local-data: no public API for OMI prices.\n"
+        "Run with --local-data <dir> where <dir>/IT_prices.csv exists."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tourism intensity (nights per worker)
 # ---------------------------------------------------------------------------
 #
@@ -1119,6 +1145,7 @@ COUNTRY_COLORS = {
     'ES': '#0051b5',
     'FR': '#2ca02c',
     'NL': '#7b2d8e',
+    'IT': '#228b22',
 }
 
 DATA_SOURCES = {
@@ -1173,6 +1200,18 @@ DATA_SOURCES = {
                        'https://opendata.cbs.nl/ODataApi/OData/85036NED'),
         'wages':      ('CBS 85924NED — compensation per employee by COROP',
                        'https://opendata.cbs.nl/ODataApi/OData/85924NED'),
+        'employment': ('Eurostat nama_10r_3empers',
+                       'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
+        'area':       ('Eurostat reg_area3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/reg_area3/'),
+        'tourism':    ('Eurostat tour_occ_nin2 — tourist nights by NUTS-3',
+                       'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/'),
+    },
+    'IT': {
+        'prices':     ('OMI (Agenzia delle Entrate) — average appraised quotation per province',
+                       'https://servizi2.inps.it/servizi/osservatoristatistici/15'),
+        'wages':      ('INPS Osservatorio dipendenti — retribuzione media per provincia',
+                       'https://servizi2.inps.it/servizi/osservatoristatistici/15/32/51/o/492'),
         'employment': ('Eurostat nama_10r_3empers',
                        'https://ec.europa.eu/eurostat/databrowser/view/nama_10r_3empers/'),
         'area':       ('Eurostat reg_area3',
@@ -1720,12 +1759,10 @@ def main():
         INPUT_DIR = Path(args.local_data)
         if not INPUT_DIR.is_dir():
             parser.error(f"--local-data directory does not exist: {INPUT_DIR}")
-        print(f"[*] Using local data from {INPUT_DIR}/")
     elif args.save_data:
         INPUT_DIR = Path(args.save_data)
         INPUT_DIR.mkdir(parents=True, exist_ok=True)
         SAVE_MODE = True
-        print(f"[*] Will save fetched data to {INPUT_DIR}/")
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers
@@ -1740,6 +1777,7 @@ def main():
         ('ES', fetch_es_prices),
         ('FR', fetch_fr_prices),
         ('NL', fetch_nl_prices),
+        ('IT', fetch_it_prices),
     ]
     if args.countries:
         selected = [c.strip().upper() for c in args.countries.split(',')]
@@ -1748,6 +1786,18 @@ def main():
             parser.error(f"No valid countries in: {args.countries}")
     else:
         fetchers = all_fetchers
+
+    local_only_requested = {cc for cc, _ in fetchers} & LOCAL_ONLY_COUNTRIES
+    if local_only_requested and (not INPUT_DIR or SAVE_MODE):
+        print(f"Error: {', '.join(sorted(local_only_requested))} require --local-data "
+              f"(no public API for prices/wages).\n"
+              f"Use --local-data <dir> or exclude with --countries.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if INPUT_DIR:
+        mode = "Using local data from" if not SAVE_MODE else "Will save fetched data to"
+        print(f"[*] {mode} {INPUT_DIR}/")
 
     # Fetch tourism data once if requested (before country loop)
     tourism = fetch_tourism_nights(year) if args.tourism else {}

@@ -12,15 +12,24 @@ every country. This affects **cross-country** comparisons but not
 | **ES** | AEAT tax returns | Salario medio anual (mean annual gross salary) | All gross pay components reported to tax authority | Employer social security contributions (~30%) |
 | **FR** | INSEE DADS/DSN | Salaire brut annuel EQTP (gross annual salary, full-time equivalent) | All gross pay components | Employer social security contributions (~45%) |
 | **NL** | CBS 85924NED | Beloning van werknemers / employees (compensation per employee) | Gross salary **plus employer social security contributions** | Nothing |
+| **IT** | INPS Osservatorio dipendenti | Retribuzione annua / numero lavoratori (total annual compensation / headcount) | Social security taxable base including employee contributions | Employer contributions, agriculture, domestic workers |
 
 ### Effect on purchase effort
 
-PT, ES and FR use roughly comparable "gross salary" concepts. NL uses
+PT, ES, FR and IT use roughly comparable "gross salary" concepts. NL uses
 "compensation of employees", which includes employer contributions on top
 of gross salary.
 
-- **NL effort is understated** by ~20-25% relative to PT/ES/FR, because the
-  denominator (wage) includes employer charges the worker never sees.
+- **NL effort is understated** by ~20-25% relative to the other countries,
+  because the denominator (wage) includes employer charges the worker never
+  sees.
+- **PT and IT wages cover private-sector employees only.** PT Quadros de
+  Pessoal excludes public administration; IT INPS excludes public sector,
+  agriculture, and domestic workers. In provinces with large public
+  employment (e.g. Roma, Lisboa), the true average wage is higher than
+  reported, meaning effort is slightly overstated.
+- **ES and FR wages include public and private sectors.** AEAT tax returns
+  cover all employment income; INSEE DADS/DSN covers all sectors.
 - Within each country, all regions use the same wage concept, so relative
   rankings are unaffected.
 
@@ -61,11 +70,19 @@ AEAT-equivalent wage.
 | **ES** | Registradores de Espana | **Mean** transaction price (EUR/m2), from property registrations |
 | **FR** | DVF open data | **Median** transaction price (EUR/m2), from notarial records |
 | **NL** | CBS StatLine | **Mean** transaction price (EUR/m2) |
+| **IT** | OMI (Agenzia delle Entrate) | **Mean** appraised quotation (EUR/m2), expert-assessed market value ranges |
 
 PT and FR use **median**, ES and NL use **mean**. The mean is typically
 higher than the median (skewed by luxury transactions), so ES and NL prices
 may be slightly inflated relative to PT and FR. The effect is small at
 NUTS-3 level (typically 5-15%) but exists.
+
+**IT prices are not transaction prices.** OMI quotations are expert-assessed
+market value ranges (min/max EUR/m2) per micro-zone, informed by transaction
+data but processed through professional appraisal. They are methodologically
+closer to ES Registradores (valuation-derived) than to PT INE or FR DVF
+(actual transaction records). The province-level figure is the mean of
+sub-provincial macro-area averages (unweighted by volume).
 
 ## Coverage gaps
 
@@ -75,8 +92,31 @@ NUTS-3 level (typically 5-15%) but exists.
   (latest available from INSEE DADS/DSN).
 - **PT prices**: INE 0012235 starts Q4 2019. For earlier years the script
   falls back to INE 0012256 (bank appraisal values, not transaction prices).
+- **IT prices**: OMI data from 2016 onward. One province missing: Sud
+  Sardegna (ITG2H), created in 2016 and not yet in the OMI compilation.
+- **IT wages**: INPS data from 2019 onward. Some provinces show no data for
+  years before boundary reclassifications (Monza e della Brianza,
+  Barletta-Andria-Trani, Sud Sardegna before 2022).
 - **Tourism data**: only usable for 2023 due to NUTS code version alignment
   (tourism dataset switched to NUTS 2021 codes in 2023).
+
+## IT requires --local-data
+
+Italy has no public API for prices or wages. Both datasets are prepared
+offline and must be provided via `--local-data`:
+
+- **Prices**: OMI quotations aggregated from the GitHub compilation at
+  `github.com/eugeniodalpozzo/italy_omi_housing_provincial_prices`
+  (original source: Agenzia delle Entrate).
+- **Wages**: INPS "Osservatorio sui lavoratori dipendenti del settore
+  privato", exported from the interactive observatory at
+  `servizi2.inps.it/servizi/osservatoristatistici/15`. The export provides
+  total annual compensation and worker headcount by province; average wage
+  is computed as the ratio.
+
+Running with `--countries IT` without `--local-data` produces an error.
+Running with `--save-data` and IT in the country list is also rejected,
+since there is nothing to fetch.
 
 ## NUTS code versions
 
@@ -86,9 +126,13 @@ Eurostat GISCO NUTS 2024 boundaries, so all codes match directly.
 Employment and area data from Eurostat may internally use NUTS 2021 for
 some years. The script handles this transparently.
 
-## The x14 multiplier for PT wages
+## Monthly payment multipliers (PT x14, IT x13)
 
 Portuguese workers receive 14 monthly payments per year: 12 regular months
 plus mandatory holiday and Christmas subsidies (each equal to one month's
 pay). The MTSS data reports monthly values; we multiply by 14 to get the
 annual figure comparable to ES/FR/NL annual wages.
+
+Italian workers receive 13 monthly payments (the "tredicesima"). The INPS
+data already reports total annual compensation, so no multiplier is needed
+in the code — the x13 is implicit in the ratio of annual pay to headcount.
