@@ -1848,6 +1848,10 @@ def main():
                 tout = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}.png")
                 plot_tourism_scatter([(country, df)], use_year, tout,
                                      metric=metric, outliers=outliers)
+                if outliers:
+                    tout_all = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}_all.png")
+                    plot_tourism_scatter([(country, df)], use_year, tout_all,
+                                         metric=metric, outliers=None)
             combined.append((country, df))
             summary_rows.append({
                 'metric': metric, 'scope': country, 'year': use_year,
@@ -1887,6 +1891,10 @@ def main():
             tout = str(out_dir / f"tourism_vs_{slug}_{year}.png")
             plot_tourism_scatter(combined, year, tout, metric=metric,
                                  outliers=outliers)
+            if outliers:
+                tout_all = str(out_dir / f"tourism_vs_{slug}_{year}_all.png")
+                plot_tourism_scatter(combined, year, tout_all, metric=metric,
+                                     outliers=None)
 
     if args.map and country_data:
         # Compute PT+ES effort range for colour scale calibration
