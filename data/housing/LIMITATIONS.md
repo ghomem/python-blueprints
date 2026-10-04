@@ -25,9 +25,18 @@ of gross salary.
   sees.
 - **PT and IT wages cover private-sector employees only.** PT Quadros de
   Pessoal excludes public administration; IT INPS excludes public sector,
-  agriculture, and domestic workers. In provinces with large public
-  employment (e.g. Roma, Lisboa), the true average wage is higher than
-  reported, meaning effort is slightly overstated.
+  agriculture, and domestic workers. Public employment is ~15% of total
+  employment in PT (OECD/DGAEP, 2023) and ~14% in IT. In regions with
+  large public employment (e.g. Roma, Lisboa), the true average wage is
+  higher than reported, meaning effort is slightly overstated.
+  An alternative was investigated for PT: INE's "Estatísticas do Rendimento
+  ao Nível Local" publishes tax-return-based income at municipality and
+  NUTS-3 level, but only as total gross declared income across all IRS
+  categories (employment, pensions, self-employment, capital gains) with no
+  breakdown by category. This makes it unsuitable — retirement-heavy regions
+  (Algarve, Alentejo) would show inflated "wages". Portugal's tax authority
+  (AT) does not publish employment-only income at regional level, unlike
+  Spain's AEAT which publishes employment-specific salary data by province.
 - **ES and FR wages include public and private sectors.** AEAT tax returns
   cover all employment income; INSEE DADS/DSN covers all sectors.
 - Within each country, all regions use the same wage concept, so relative
