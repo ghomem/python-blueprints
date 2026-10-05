@@ -1302,6 +1302,63 @@ def _tourism_colors(base_hex, npw_values, norm):
     return hsv_to_rgb(hsv_arr.reshape(n, 1, 3)).reshape(n, 3)
 
 
+def multivar_fit_csv(country_data: list, year: int, out_dir: Path):
+    """Per-country OLS: effort = a*ln(density) + b*npw + c.
+
+    Removes Eurostat fallback regions, fits independently per country,
+    writes a single CSV with all regions and per-country coefficients.
+    """
+    all_rows = []
+
+    for cc, df, _ in country_data:
+        d = df[~df['wage_fallback']].copy()
+        needed = ['jobs_per_km2', 'effort_months_per_m2', 'nights_per_worker']
+        d = d.dropna(subset=needed)
+        d = d[d['jobs_per_km2'] > 0].reset_index(drop=True)
+
+        if len(d) < 4:
+            print(f"  [{cc}] Too few regions for fit ({len(d)})", file=sys.stderr)
+            continue
+
+        ln_density = np.log(d['jobs_per_km2'].values)
+        npw = d['nights_per_worker'].values
+        effort = d['effort_months_per_m2'].values
+
+        X = np.column_stack([ln_density, npw, np.ones(len(d))])
+        coeffs, _, _, _ = np.linalg.lstsq(X, effort, rcond=None)
+        predicted = X @ coeffs
+
+        ss_res = np.sum((effort - predicted) ** 2)
+        ss_tot = np.sum((effort - effort.mean()) ** 2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
+        rmse = np.sqrt(ss_res / len(effort))
+
+        d['country'] = cc
+        d['predicted_effort'] = predicted
+        d['pct_error'] = (predicted - effort) / effort * 100
+        d['abs_pct_error'] = np.abs(d['pct_error'])
+        all_rows.append(d)
+
+        mape = d['abs_pct_error'].mean()
+        a, b, c = coeffs
+        print(f"  [{cc}] effort = {a:.4f}·ln(density) + {b:.4f}·npw + {c:.4f}"
+              f"  R²={r2:.4f}  RMSE={rmse:.4f}  N={len(d)}"
+              f"  MAPE={mape:.1f}%  accuracy={100 - mape:.1f}%")
+
+    if not all_rows:
+        return
+
+    pool = pd.concat(all_rows, ignore_index=True)
+    out_cols = ['country', 'nuts3', 'name', 'jobs_per_km2',
+                'nights_per_worker', 'effort_months_per_m2',
+                'predicted_effort', 'pct_error', 'abs_pct_error']
+    result = pool[out_cols].sort_values(['country', 'nuts3'])
+
+    csv_path = out_dir / f"multivar_fit_{year}.csv"
+    result.to_csv(csv_path, index=False, float_format='%.4f')
+    print(f"[+] Multivariate fit saved to: {csv_path} ({len(result)} regions)")
+
+
 def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """IQR on log-linear residuals: True for outlier points."""
     valid = x > 0
@@ -1744,10 +1801,17 @@ def main():
                         help='Color points by tourism intensity (nights/worker). '
                              'Requires year=2023 (only year with matching NUTS codes '
                              'between employment and tourism datasets).')
+    parser.add_argument('--fit-csv', action='store_true',
+                        help='Per-country two-variable OLS: effort = a·ln(density) '
+                             '+ b·npw + c. Outputs CSV with predicted effort and '
+                             '%% error. Implies --tourism; requires year 2023.')
     parser.add_argument('--map', action='store_true',
                         help='Choropleth map of purchase effort by NUTS-3 region '
                              '(mainland only). Colour scale calibrated to PT+ES range.')
     args = parser.parse_args()
+
+    if args.fit_csv:
+        args.tourism = True
 
     if args.tourism and args.year != 2023:
         parser.error("--tourism requires year 2023. Tourism and employment datasets "
@@ -1909,6 +1973,10 @@ def main():
             map_out = str(out_dir / f"{country}_effort_map_{use_year}.png")
             plot_map(df, country, use_year, map_out, metric='effort',
                      vmin=vmin, vmax=vmax)
+
+    if args.fit_csv and country_data:
+        print("\n[*] Per-country multivariate fit:")
+        multivar_fit_csv(country_data, year, out_dir)
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)

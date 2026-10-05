@@ -145,3 +145,25 @@ annual figure comparable to ES/FR/NL annual wages.
 Italian workers receive 13 monthly payments (the "tredicesima"). The INPS
 data already reports total annual compensation, so no multiplier is needed
 in the code — the x13 is implicit in the ratio of annual pay to headcount.
+
+## Two-variable fit (`--fit-csv`)
+
+The per-country OLS fit `effort = a·ln(density) + b·npw + c` is fitted
+independently per country. Key caveats:
+
+- **Eurostat fallback regions are excluded** (Basque Country, Navarra,
+  Açores) because their wage concept differs. The CSV omits them entirely.
+- **Fit quality varies by country.** PT and FR achieve R² ~0.85-0.81; ES
+  ~0.76; IT ~0.57. Italy's lower R² reflects the North-South structural
+  gap in wages, construction costs and land markets — two variables cannot
+  capture this, and the residual scatter is pervasive rather than driven by
+  a few outliers.
+- **Coefficients are not comparable across countries** without accounting
+  for the wage and price concept differences documented above. The tourism
+  coefficient (b) is comparable in direction and order of magnitude, but
+  the density coefficient (a) absorbs country-specific baseline effects.
+- **Workplace-residence mismatch** in dense metro areas (Paris petite
+  couronne, Milan) can produce large residuals: employment density is
+  measured where jobs sit, but housing prices reflect the residential
+  market. Regions that are primarily commuter job destinations will show
+  lower actual effort than predicted.
