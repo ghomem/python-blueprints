@@ -168,6 +168,20 @@ independently per country. Key caveats:
   job density inflates the denominator). These two pull the regression in
   opposite directions at the high-density end. The compensation-based wage
   concept (see above) compounds the issue.
+- **Why ln(density) but linear tourism.** The two variables use different
+  functional forms because they capture different economic mechanisms.
+  Job density operates through a local equilibrium: more jobs attract more
+  workers who compete for housing, but wages and supply respond, producing
+  diminishing marginal returns — hence the logarithm. Tourism intensity
+  operates as an external demand shock: tourist spending and short-term
+  rental yields are priced by visitors' home-country purchasing power, not
+  local wages. Selling a house in a touristic region means giving up a
+  stream of rental income driven by external demand, so prices scale
+  linearly with tourism volume — there is no local dampening mechanism at
+  NUTS-3 scale. A log-log model was tested and performed worse across all
+  countries (PT R² dropped from 0.85 to 0.74), confirming that the
+  linear-in-tourism specification is not just empirically better but
+  structurally appropriate.
 - **Workplace-residence mismatch** in dense metro areas (Paris petite
   couronne, The Hague, Milan) can produce large residuals: employment
   density is measured where jobs sit, but housing prices reflect the
