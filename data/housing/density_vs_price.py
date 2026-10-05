@@ -1145,7 +1145,7 @@ COUNTRY_COLORS = {
     'ES': '#0051b5',
     'FR': '#2ca02c',
     'NL': '#7b2d8e',
-    'IT': '#228b22',
+    'IT': '#9b2335',
 }
 
 DATA_SOURCES = {
