@@ -43,7 +43,7 @@ python3 density_vs_price.py 2023 --local-data --tourism --map
 | `--countries CC` | Comma-separated codes for the combined plot (default: all) |
 | `--linear-x` | Linear x-axis on combined plot (default: log) |
 | `--tourism` | Colour by tourism intensity; 2023 only |
-| `--fit-csv` | Per-country two-variable OLS fit (see below); implies `--tourism` |
+| `--fit-multivar` | Per-country two-variable OLS fit (see below); implies `--tourism` |
 | `--map` | Choropleth map of purchase effort per NUTS-3 region (mainland only) |
 
 ### Output
@@ -52,7 +52,7 @@ Plots go to `/tmp/density_vs_price/`. Per-country scatter + combined plot +
 summary CSV + data-sources CSV. With `--map`, one choropleth per country
 (`{CC}_effort_map_{year}.png`); colour scale calibrated to PT+ES effort range.
 
-### Two-variable fit (`--fit-csv`)
+### Two-variable fit (`--fit-multivar`)
 
 Fits `effort = a·ln(job_density) + b·nights_per_worker + c` independently
 per country via OLS. Eurostat NUTS-2 wage fallback regions are excluded from

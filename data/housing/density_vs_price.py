@@ -1302,7 +1302,7 @@ def _tourism_colors(base_hex, npw_values, norm):
     return hsv_to_rgb(hsv_arr.reshape(n, 1, 3)).reshape(n, 3)
 
 
-def multivar_fit_csv(country_data: list, year: int, out_dir: Path):
+def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
     """Per-country OLS: effort = a*ln(density) + b*npw + c.
 
     Removes Eurostat fallback regions, fits independently per country,
@@ -1357,6 +1357,88 @@ def multivar_fit_csv(country_data: list, year: int, out_dir: Path):
     csv_path = out_dir / f"multivar_fit_{year}.csv"
     result.to_csv(csv_path, index=False, float_format='%.4f')
     print(f"[+] Multivariate fit saved to: {csv_path} ({len(result)} regions)")
+
+    # --- Summary table as PNG ---
+    summary = []
+    for cc, df, _ in country_data:
+        d = df[~df['wage_fallback']].copy()
+        needed = ['jobs_per_km2', 'effort_months_per_m2', 'nights_per_worker']
+        d = d.dropna(subset=needed)
+        d = d[d['jobs_per_km2'] > 0]
+        if len(d) < 4:
+            continue
+        ln_density = np.log(d['jobs_per_km2'].values)
+        npw = d['nights_per_worker'].values
+        effort = d['effort_months_per_m2'].values
+        X = np.column_stack([ln_density, npw, np.ones(len(d))])
+        coeffs, _, _, _ = np.linalg.lstsq(X, effort, rcond=None)
+        predicted = X @ coeffs
+        ss_res = np.sum((effort - predicted) ** 2)
+        ss_tot = np.sum((effort - effort.mean()) ** 2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
+        mape_val = np.mean(np.abs((predicted - effort) / effort * 100))
+        summary.append({
+            'cc': cc, 'a': coeffs[0], 'b': coeffs[1], 'c': coeffs[2],
+            'r2': r2, 'n': len(d), 'mape': mape_val,
+        })
+
+    if summary:
+        _plot_fit_summary(summary, year, out_dir)
+
+
+def _plot_fit_summary(summary: list, year: int, out_dir: Path):
+    fig, ax = plt.subplots(figsize=(10, 1.2 + 0.45 * len(summary)), dpi=200)
+    ax.axis('off')
+
+    col_labels = ['Country', 'a\n(ln density)', 'b\n(tourism)', 'c\n(intercept)',
+                  'R²', 'N', 'MAPE', 'Accuracy']
+    rows = []
+    colors = []
+    for s in summary:
+        acc = 100 - s['mape']
+        rows.append([
+            s['cc'],
+            f"{s['a']:.4f}",
+            f"{s['b']:.4f}",
+            f"{s['c']:+.4f}",
+            f"{s['r2']:.3f}",
+            str(s['n']),
+            f"{s['mape']:.1f}%",
+            f"{acc:.1f}%",
+        ])
+        if acc >= 90:
+            colors.append('#d4edda')
+        elif acc >= 85:
+            colors.append('#fff3cd')
+        else:
+            colors.append('#f8d7da')
+
+    table = ax.table(
+        cellText=rows, colLabels=col_labels,
+        cellLoc='center', loc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.6)
+
+    for j in range(len(col_labels)):
+        cell = table[0, j]
+        cell.set_facecolor('#2c3e50')
+        cell.set_text_props(color='white', fontweight='bold', fontsize=9)
+
+    for i, color in enumerate(colors):
+        for j in range(len(col_labels)):
+            table[i + 1, j].set_facecolor(color)
+
+    title = (f"Purchase Effort — Two-Variable Fit ({year})\n"
+             f"effort = a · ln(job density) + b · tourism nights/worker + c")
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+
+    fig.tight_layout()
+    png_path = out_dir / f"multivar_fit_summary_{year}.png"
+    fig.savefig(png_path, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"[+] Fit summary table saved to: {png_path}")
 
 
 def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -1801,7 +1883,7 @@ def main():
                         help='Color points by tourism intensity (nights/worker). '
                              'Requires year=2023 (only year with matching NUTS codes '
                              'between employment and tourism datasets).')
-    parser.add_argument('--fit-csv', action='store_true',
+    parser.add_argument('--fit-multivar', action='store_true',
                         help='Per-country two-variable OLS: effort = a·ln(density) '
                              '+ b·npw + c. Outputs CSV with predicted effort and '
                              '%% error. Implies --tourism; requires year 2023.')
@@ -1810,7 +1892,7 @@ def main():
                              '(mainland only). Colour scale calibrated to PT+ES range.')
     args = parser.parse_args()
 
-    if args.fit_csv:
+    if args.fit_multivar:
         args.tourism = True
 
     if args.tourism and args.year != 2023:
@@ -1974,9 +2056,9 @@ def main():
             plot_map(df, country, use_year, map_out, metric='effort',
                      vmin=vmin, vmax=vmax)
 
-    if args.fit_csv and country_data:
+    if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")
-        multivar_fit_csv(country_data, year, out_dir)
+        multivar_fit_multivar(country_data, year, out_dir)
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)

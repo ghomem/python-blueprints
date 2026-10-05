@@ -146,7 +146,7 @@ Italian workers receive 13 monthly payments (the "tredicesima"). The INPS
 data already reports total annual compensation, so no multiplier is needed
 in the code — the x13 is implicit in the ratio of annual pay to headcount.
 
-## Two-variable fit (`--fit-csv`)
+## Two-variable fit (`--fit-multivar`)
 
 The per-country OLS fit `effort = a·ln(density) + b·npw + c` is fitted
 independently per country. Key caveats:
