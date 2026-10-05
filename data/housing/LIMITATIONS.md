@@ -162,8 +162,14 @@ independently per country. Key caveats:
   for the wage and price concept differences documented above. The tourism
   coefficient (b) is comparable in direction and order of magnitude, but
   the density coefficient (a) absorbs country-specific baseline effects.
+- **NL fit quality is affected** by Haarlem (residential spillover from
+  Amsterdam — prices carry the Amsterdam premium but local density and
+  wages don't) and The Hague (seat of government — extreme public-sector
+  job density inflates the denominator). These two pull the regression in
+  opposite directions at the high-density end. The compensation-based wage
+  concept (see above) compounds the issue.
 - **Workplace-residence mismatch** in dense metro areas (Paris petite
-  couronne, Milan) can produce large residuals: employment density is
-  measured where jobs sit, but housing prices reflect the residential
-  market. Regions that are primarily commuter job destinations will show
-  lower actual effort than predicted.
+  couronne, The Hague, Milan) can produce large residuals: employment
+  density is measured where jobs sit, but housing prices reflect the
+  residential market. Regions that are primarily commuter job destinations
+  will show lower actual effort than predicted.
