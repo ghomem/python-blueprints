@@ -1340,10 +1340,11 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
         all_rows.append(d)
 
         mape = d['abs_pct_error'].mean()
+        mape_sd = d['abs_pct_error'].std()
         a, b, c = coeffs
         print(f"  [{cc}] effort = {a:.4f}·ln(density) + {b:.4f}·npw + {c:.4f}"
               f"  R²={r2:.4f}  RMSE={rmse:.4f}  N={len(d)}"
-              f"  MAPE={mape:.1f}%  accuracy={100 - mape:.1f}%")
+              f"  MAPE={mape:.1f} ± {mape_sd:.1f}%  accuracy={100 - mape:.1f}%")
 
     if not all_rows:
         return
@@ -1376,10 +1377,12 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
         ss_res = np.sum((effort - predicted) ** 2)
         ss_tot = np.sum((effort - effort.mean()) ** 2)
         r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
-        mape_val = np.mean(np.abs((predicted - effort) / effort * 100))
+        abs_pct = np.abs((predicted - effort) / effort * 100)
+        mape_val = np.mean(abs_pct)
+        mape_sd_val = np.std(abs_pct)
         summary.append({
             'cc': cc, 'a': coeffs[0], 'b': coeffs[1], 'c': coeffs[2],
-            'r2': r2, 'n': len(d), 'mape': mape_val,
+            'r2': r2, 'n': len(d), 'mape': mape_val, 'mape_sd': mape_sd_val,
         })
 
     if summary:
@@ -1391,7 +1394,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     ax.axis('off')
 
     col_labels = ['Country', 'a\n(ln density)', 'b\n(tourism)', 'c\n(intercept)',
-                  'R²', 'N', 'MAPE', 'Accuracy']
+                  'R²', 'N', 'MAPE\n(avg ± sd)', 'Accuracy']
     rows = []
     colors = []
     for s in summary:
@@ -1403,7 +1406,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
             f"{s['c']:+.4f}",
             f"{s['r2']:.3f}",
             str(s['n']),
-            f"{s['mape']:.1f}%",
+            f"{s['mape']:.1f} ± {s['mape_sd']:.1f}%",
             f"{acc:.1f}%",
         ])
         if acc >= 90:
@@ -1419,7 +1422,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     )
     table.auto_set_font_size(False)
     table.set_fontsize(10)
-    table.scale(1, 1.6)
+    table.scale(1, 1.9)
 
     for j in range(len(col_labels)):
         cell = table[0, j]
