@@ -49,6 +49,63 @@ for seeing overall patterns but the NL data points sit on a different wage
 baseline. On the scatter plots, this manifests as NL appearing to have lower
 effort than similarly priced regions in other countries.
 
+### Why not use Eurostat/ARDECO "compensation of employees"?
+
+The ARDECO database (JRC) provides "compensation of employees" (ESA 2010
+code D.1) at NUTS-3 level, with a single harmonised definition across all
+EU countries. This was evaluated as a potential common denominator for
+cross-country effort comparisons, but it is **not suitable** for this
+purpose:
+
+1. **It measures cost of work, not purchasing power.** Compensation of
+   employees includes employer social contributions on top of gross salary.
+   These contributions vary widely by country (PT ~24%, ES ~30%, IT ~33%,
+   FR ~45%), so a worker with the same gross salary and the same purchasing
+   power appears to earn very different amounts depending on the country's
+   social security system. Purchase effort should reflect what the worker
+   can spend, not what they cost the employer.
+
+2. **Cross-country divergence is worse, not better.** Empirical comparison
+   (2023) shows ARDECO compensation/employee is 1.22× the national wage in
+   PT, 1.36× in ES, 1.46× in IT, 1.21× in FR, and 0.87× in NL. These
+   country-specific multipliers reflect employer contribution rates, not
+   meaningful differences in purchasing power. NL falls below 1.0 because
+   its national source (CBS) already includes employer contributions.
+
+3. **NUTS-3 values are synthetic.** ARDECO's source is Eurostat
+   `nama_10r_2coe` (NUTS-2). NUTS-3 estimates are derived by distributing
+   the NUTS-2 total proportionally to sectoral employment
+   (`RUWC_NUTS3 = SNETX_NUTS3 / SNETX_NUTS2 × RUWC_NUTS2`). This means
+   all NUTS-3 regions within a NUTS-2 area share the same underlying wage,
+   adjusted only by industry mix — losing the real within-NUTS-2 variation
+   that national sources capture (e.g. AEAT province-level salaries in ES,
+   MTSS municipality-aggregated wages in PT).
+
+4. **Within-country rankings are unaffected.** Spearman rank correlations
+   between national-source effort and ARDECO-source effort are 0.90–0.98
+   across all five countries, confirming that the choice of wage source
+   does not change regional rankings within a country.
+
+### Why not use household disposable income?
+
+Household net disposable income (Eurostat `nama_10r_2hhinc`, ARDECO code
+`RUVNH`) would in principle be the ideal denominator for purchase effort:
+it reflects what people actually have to spend after taxes, social
+contributions and transfers. However:
+
+- **It is only available at NUTS-2 level.** Eurostat publishes household
+  income accounts at NUTS-2; there is no official NUTS-3 breakdown. ARDECO
+  does not downscale it to NUTS-3 (unlike compensation, which it estimates
+  via employment proxies).
+- **Eurostat advises against cross-country use.** The regional household
+  income statistics page explicitly warns that these data should not be
+  used to compare income across countries, because they exclude social
+  transfers in kind (public healthcare, education, housing subsidies),
+  which vary substantially between countries.
+
+If a NUTS-3 disposable income dataset becomes available in the future, it
+would be worth revisiting as an alternative effort metric.
+
 ## Eurostat NUTS-2 wage fallback
 
 Five regions lack NUTS-3 wage data from national sources and fall back to
