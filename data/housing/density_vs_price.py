@@ -1486,6 +1486,38 @@ def _fit_log_trend(ax, x, y, exclude_mask=None):
     return r2, coeffs[0], coeffs[1], rmse
 
 
+def plot_weighted_effort_bar(country_efforts: list[tuple[str, float]],
+                            year: int, output_file: str):
+    """Bar chart of employment-weighted mean purchase effort per country."""
+    country_efforts = sorted(country_efforts, key=lambda x: x[1])
+    countries = [cc for cc, _ in country_efforts]
+    efforts = [e for _, e in country_efforts]
+    bar_color = COUNTRY_COLORS['IT']
+
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(countries)), 5), dpi=300)
+
+    bars = ax.bar(countries, efforts, color=bar_color, edgecolor='white',
+                  linewidth=0.8, width=0.6)
+    for bar, val in zip(bars, efforts):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
+                f'{val:.2f}', ha='center', va='bottom', fontsize=11,
+                fontweight='bold')
+
+    ax.set_ylabel('Employment-weighted mean effort (months of salary / m²)',
+                  fontsize=11, labelpad=10)
+    ax.set_title(f'Housing Purchase Effort by Country ({year})',
+                 fontsize=13, fontweight='bold', pad=12)
+    ax.set_ylim(0, max(efforts) * 1.15)
+    ax.tick_params(axis='x', labelsize=12)
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] Weighted effort bar chart saved to: {output_file}")
+
+
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
                  metric: str = 'effort', outliers: str | None = None,
                  tourism: bool = False):
@@ -2002,11 +2034,23 @@ def main():
                     plot_tourism_scatter([(country, df)], use_year, tout_all,
                                          metric=metric, outliers=None)
             combined.append((country, df))
+            weighted_effort = None
+            if metric == 'effort':
+                valid = df.dropna(subset=['effort_months_per_m2', 'employment_ths'])
+                total_emp = valid['employment_ths'].sum()
+                if total_emp > 0:
+                    weighted_effort = (
+                        (valid['effort_months_per_m2'] * valid['employment_ths']).sum()
+                        / total_emp
+                    )
+                    print(f"  [{country}] Employment-weighted mean effort: "
+                          f"{weighted_effort:.2f} months/m²")
             summary_rows.append({
                 'metric': metric, 'scope': country, 'year': use_year,
                 'n_regions': stats['n_regions'],
                 'n_outliers': stats['n_outliers'],
                 'r2': stats['r2'],
+                'weighted_effort': weighted_effort,
             })
 
         if len(combined) > 1:
@@ -2015,11 +2059,25 @@ def main():
             stats = plot_combined(
                 combined, year, out, metric=metric, outliers=outliers,
                 log_x=not args.linear_x, tourism=args.tourism)
+            weighted_effort_combined = None
+            if metric == 'effort':
+                all_valid = pd.concat(
+                    [df for _, df in combined], ignore_index=True,
+                ).dropna(subset=['effort_months_per_m2', 'employment_ths'])
+                total_emp = all_valid['employment_ths'].sum()
+                if total_emp > 0:
+                    weighted_effort_combined = (
+                        (all_valid['effort_months_per_m2'] * all_valid['employment_ths']).sum()
+                        / total_emp
+                    )
+                    print(f"  [{tag}] Employment-weighted mean effort: "
+                          f"{weighted_effort_combined:.2f} months/m²")
             summary_rows.append({
                 'metric': metric, 'scope': tag, 'year': year,
                 'n_regions': stats['n_regions'],
                 'n_outliers': stats['n_outliers'],
                 'r2': stats['r2'],
+                'weighted_effort': weighted_effort_combined,
             })
 
             all_df = pd.concat(
@@ -2070,6 +2128,17 @@ def main():
         summary_path = out_dir / f"summary_{year}.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"[+] Summary saved to: {summary_path}")
+
+        effort_by_country = [
+            (r['scope'], r['weighted_effort'])
+            for r in summary_rows
+            if r['metric'] == 'effort'
+            and r['weighted_effort'] is not None
+            and len(r['scope']) == 2
+        ]
+        if effort_by_country:
+            bar_path = str(out_dir / f"weighted_effort_{year}.png")
+            plot_weighted_effort_bar(effort_by_country, year, bar_path)
 
         countries_used = [cc for cc, _, _ in country_data]
         source_rows = []
