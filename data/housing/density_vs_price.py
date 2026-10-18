@@ -576,11 +576,22 @@ def _fetch_fr_wages_insee() -> pd.DataFrame:
 # BeloningVanWerknemers_6 (million EUR) / Werknemers_11 (thousand persons)
 # = average annual compensation per employee.
 # https://opendata.cbs.nl/ODataApi/OData/85924NED
+#
+# CBS only publishes "beloning van werknemers" (compensation of employees)
+# at COROP level, not gross wages. We divide by 1.27 to approximate gross
+# salary, since employer social contributions are ~27% of gross wages.
+# See LIMITATIONS.md § "NL employer contribution correction" for sources.
 # ---------------------------------------------------------------------------
+
+NL_EMPLOYER_CONTRIBUTION_FACTOR = 1.27
 
 
 def _fetch_nl_wages_cbs() -> pd.DataFrame:
-    """Average annual compensation per employee by COROP from CBS 85924NED."""
+    """Average annual compensation per employee by COROP from CBS 85924NED.
+
+    Returns raw compensation; the ÷1.27 gross-salary correction is applied
+    in fetch_wages() so it works for both live-fetch and local-data paths.
+    """
     records = []
     for year in range(2019, 2027):
         url = ("https://opendata.cbs.nl/ODataApi/OData/85924NED/TypedDataSet?"
@@ -612,6 +623,16 @@ def _fetch_es_wages_aeat() -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _apply_nl_wage_correction(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert NL compensation of employees to approximate gross salary.
+
+    See LIMITATIONS.md § "NL employer contribution correction" for sources.
+    """
+    df = df.copy()
+    df['avg_annual_wage'] = df['avg_annual_wage'] / NL_EMPLOYER_CONTRIBUTION_FACTOR
+    return df
+
+
 def fetch_wages(country: str) -> pd.DataFrame:
     """Fetch wage data — NUTS-3 where available, NUTS-2 otherwise.
 
@@ -622,6 +643,8 @@ def fetch_wages(country: str) -> pd.DataFrame:
     """
     local = _load_df(country, 'wages')
     if local is not None:
+        if country.upper() == 'NL':
+            return _apply_nl_wage_correction(local)
         return local
     print(f"[+] Fetching wage data [{country.upper()}]...", flush=True)
 
@@ -651,7 +674,7 @@ def fetch_wages(country: str) -> pd.DataFrame:
         if not df.empty:
             print(f"  Using CBS 85924NED (NUTS-3, {len(df)} rows)")
             _save_df(df, country, 'wages')
-            return df
+            return _apply_nl_wage_correction(df)
 
     df = _fetch_wages_eurostat(country)
     _save_df(df, country, 'wages')

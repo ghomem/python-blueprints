@@ -11,7 +11,7 @@ every country. This affects **cross-country** comparisons but not
 | **PT** | MTSS Quadros de Pessoal, sheet q37 | Ganho (mean monthly earnings) x 14 | Base pay, meal subsidy, shift pay, regular bonuses, overtime | Employer social security contributions (~23.75%), irregular bonuses |
 | **ES** | AEAT tax returns | Salario medio anual (mean annual gross salary) | All gross pay components reported to tax authority | Employer social security contributions (~30%) |
 | **FR** | INSEE DADS/DSN | Salaire brut annuel EQTP (gross annual salary, full-time equivalent) | All gross pay components | Employer social security contributions (~45%) |
-| **NL** | CBS 85924NED | Beloning van werknemers / employees (compensation per employee) | Gross salary **plus employer social security contributions** | Nothing |
+| **NL** | CBS 85924NED | Beloning van werknemers / employees (compensation per employee), **corrected ÷1.27** to approximate gross salary | Gross salary **plus employer social security contributions** (before correction) | Nothing |
 | **IT** | INPS Osservatorio dipendenti | Retribuzione annua / numero lavoratori (total annual compensation / headcount) | Social security taxable base including employee contributions | Employer contributions, agriculture, domestic workers |
 
 ### Effect on purchase effort
@@ -20,9 +20,22 @@ PT, ES, FR and IT use roughly comparable "gross salary" concepts. NL uses
 "compensation of employees", which includes employer contributions on top
 of gross salary.
 
-- **NL effort is understated** by ~20-25% relative to the other countries,
-  because the denominator (wage) includes employer charges the worker never
-  sees.
+- **NL employer contribution correction.** CBS 85924NED reports "beloning
+  van werknemers" (compensation of employees), which includes employer
+  social security contributions on top of gross salary. No CBS dataset
+  publishes gross wages at COROP level. To make NL comparable to the
+  gross-salary concepts used for PT, ES, FR and IT, the script divides
+  NL compensation by 1.27 — the ratio of labour costs to gross wages
+  reported by CBS ("loonkosten per gewerkt uur bedroegen gemiddeld 35,3
+  euro. Dat is 27 procent meer dan het brutoloon per gewerkt uur", 2019
+  figures). Source:
+  https://www.cbs.nl/nl-nl/longread/rapportages/2021/lonen-en-loonkosten-een-overzicht-van-de-verschillende-cbs-cijfers/5-cbs-uitkomsten-over-loonkosten
+  The 27% figure is consistent with the statutory employer contribution
+  rates for 2023-2024 (~18% AOW/ANW + 3-8% AWF + 6-7% WIA + small
+  surcharges). This correction is a national factor — it does not affect
+  within-NL regional rankings, only cross-country comparability. Residual
+  error is estimated at ±2-3 percentage points due to year-on-year rate
+  changes and sectoral variation.
 - **PT and IT wages cover private-sector employees only.** PT Quadros de
   Pessoal excludes public administration; IT INPS excludes public sector,
   agriculture, and domestic workers. Public employment is ~15% of total
@@ -45,9 +58,10 @@ of gross salary.
 ### Recommendation
 
 Use per-country plots for reliable comparisons. The combined plot is useful
-for seeing overall patterns but the NL data points sit on a different wage
-baseline. On the scatter plots, this manifests as NL appearing to have lower
-effort than similarly priced regions in other countries.
+for seeing overall patterns. The NL employer contribution correction (÷1.27)
+brings NL onto approximately the same gross-salary baseline as the other
+countries, but a residual discrepancy of ±2-3% may remain due to year-on-year
+variation in employer contribution rates.
 
 ### Why not use Eurostat/ARDECO "compensation of employees"?
 
@@ -70,7 +84,8 @@ purpose:
    PT, 1.36× in ES, 1.46× in IT, 1.21× in FR, and 0.87× in NL. These
    country-specific multipliers reflect employer contribution rates, not
    meaningful differences in purchasing power. NL falls below 1.0 because
-   its national source (CBS) already includes employer contributions.
+   its national source (CBS) already includes employer contributions
+   (now corrected ÷1.27, which would bring the ratio to ~1.10×).
 
 3. **NUTS-3 values are synthetic.** ARDECO's source is Eurostat
    `nama_10r_2coe` (NUTS-2). NUTS-3 estimates are derived by distributing
