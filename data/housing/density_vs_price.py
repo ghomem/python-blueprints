@@ -1344,7 +1344,7 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
         a, b, c = coeffs
         print(f"  [{cc}] effort = {a:.4f}·ln(density) + {b:.4f}·npw + {c:.4f}"
               f"  R²={r2:.4f}  RMSE={rmse:.4f}  N={len(d)}"
-              f"  MAPE={mape:.1f} ± {mape_sd:.1f}%  accuracy={100 - mape:.1f}%")
+              f"  MAPE={mape:.1f} ± {mape_sd:.1f}%  accuracy={100 - mape:.1f} ± {mape_sd:.1f}%")
 
     if not all_rows:
         return
@@ -1394,7 +1394,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     ax.axis('off')
 
     col_labels = ['Country', 'a\n(ln density)', 'b\n(tourism)', 'c\n(intercept)',
-                  'R²', 'N', 'MAPE\n(avg ± sd)', 'Accuracy']
+                  'R²', 'N', 'MAPE\n(avg ± sd)', 'Accuracy\n(avg ± sd)']
     rows = []
     colors = []
     for s in summary:
@@ -1407,7 +1407,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
             f"{s['r2']:.3f}",
             str(s['n']),
             f"{s['mape']:.1f} ± {s['mape_sd']:.1f}%",
-            f"{acc:.1f}%",
+            f"{acc:.1f} ± {s['mape_sd']:.1f}%",
         ])
         if acc >= 90:
             colors.append('#d4edda')
