@@ -1509,6 +1509,18 @@ def _fit_log_trend(ax, x, y, exclude_mask=None):
     return r2, coeffs[0], coeffs[1], rmse
 
 
+def _weighted_mean_effort(df: pd.DataFrame) -> float | None:
+    """Employment-weighted mean purchase effort across regions."""
+    valid = df.dropna(subset=['effort_months_per_m2', 'employment_ths'])
+    total_emp = valid['employment_ths'].sum()
+    if total_emp > 0:
+        return (
+            (valid['effort_months_per_m2'] * valid['employment_ths']).sum()
+            / total_emp
+        )
+    return None
+
+
 def plot_weighted_effort_bar(country_efforts: list[tuple[str, float]],
                             year: int, output_file: str):
     """Bar chart of employment-weighted mean purchase effort per country."""
@@ -2059,22 +2071,19 @@ def main():
             combined.append((country, df))
             weighted_effort = None
             if metric == 'effort':
-                valid = df.dropna(subset=['effort_months_per_m2', 'employment_ths'])
-                total_emp = valid['employment_ths'].sum()
-                if total_emp > 0:
-                    weighted_effort = (
-                        (valid['effort_months_per_m2'] * valid['employment_ths']).sum()
-                        / total_emp
-                    )
+                weighted_effort = _weighted_mean_effort(df)
+                if weighted_effort is not None:
                     print(f"  [{country}] Employment-weighted mean effort: "
                           f"{weighted_effort:.2f} months/m²")
-            summary_rows.append({
+            row = {
                 'metric': metric, 'scope': country, 'year': use_year,
                 'n_regions': stats['n_regions'],
                 'n_outliers': stats['n_outliers'],
                 'r2': stats['r2'],
-                'weighted_effort': weighted_effort,
-            })
+            }
+            if metric == 'effort':
+                row['weighted_effort'] = weighted_effort
+            summary_rows.append(row)
 
         if len(combined) > 1:
             tag = '_'.join(cc for cc, _ in combined)
@@ -2084,24 +2093,22 @@ def main():
                 log_x=not args.linear_x, tourism=args.tourism)
             weighted_effort_combined = None
             if metric == 'effort':
-                all_valid = pd.concat(
+                all_df_combined = pd.concat(
                     [df for _, df in combined], ignore_index=True,
-                ).dropna(subset=['effort_months_per_m2', 'employment_ths'])
-                total_emp = all_valid['employment_ths'].sum()
-                if total_emp > 0:
-                    weighted_effort_combined = (
-                        (all_valid['effort_months_per_m2'] * all_valid['employment_ths']).sum()
-                        / total_emp
-                    )
+                )
+                weighted_effort_combined = _weighted_mean_effort(all_df_combined)
+                if weighted_effort_combined is not None:
                     print(f"  [{tag}] Employment-weighted mean effort: "
                           f"{weighted_effort_combined:.2f} months/m²")
-            summary_rows.append({
+            row = {
                 'metric': metric, 'scope': tag, 'year': year,
                 'n_regions': stats['n_regions'],
                 'n_outliers': stats['n_outliers'],
                 'r2': stats['r2'],
-                'weighted_effort': weighted_effort_combined,
-            })
+            }
+            if metric == 'effort':
+                row['weighted_effort'] = weighted_effort_combined
+            summary_rows.append(row)
 
             all_df = pd.concat(
                 [df.assign(country=cc) for cc, df in combined],
