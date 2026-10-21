@@ -1509,6 +1509,34 @@ def _fit_log_trend(ax, x, y, exclude_mask=None):
     return r2, coeffs[0], coeffs[1], rmse
 
 
+MORTGAGE_LTV = 0.90
+MORTGAGE_INTEREST = 0.04
+MORTGAGE_MAX_EFFORT_PCT = 0.45
+MORTGAGE_AREA_M2 = 50
+GROSS_TO_NET_RATIO = 0.70
+MORTGAGE_THRESHOLD_YEARS = 15
+
+
+def _add_mortgage_years(df: pd.DataFrame) -> pd.DataFrame:
+    """Add mortgage_years_50m2: years to repay a 50 m² flat under fixed assumptions.
+
+    Annuity formula: n = -ln(1 - L·i/M) / ln(1+i), where L = loan principal,
+    i = monthly interest rate, M = maximum monthly payment. Regions where
+    interest exceeds payment capacity are set to inf (unaffordable).
+    """
+    df = df.copy()
+    loan = MORTGAGE_LTV * df['price_eur_m2'] * MORTGAGE_AREA_M2
+    net_monthly = df['avg_annual_wage'] / 12 * GROSS_TO_NET_RATIO
+    payment = MORTGAGE_MAX_EFFORT_PCT * net_monthly
+    i = MORTGAGE_INTEREST / 12
+    ratio = loan * i / payment
+    months = pd.Series(np.inf, index=df.index)
+    feasible = ratio < 1
+    months[feasible] = -np.log(1 - ratio[feasible]) / np.log(1 + i)
+    df['mortgage_years_50m2'] = months / 12
+    return df
+
+
 def _weighted_mean_effort(df: pd.DataFrame) -> float | None:
     """Employment-weighted mean purchase effort across regions."""
     valid = df.dropna(subset=['effort_months_per_m2', 'employment_ths'])
@@ -1551,6 +1579,53 @@ def plot_weighted_effort_bar(country_efforts: list[tuple[str, float]],
     plt.savefig(output_file, dpi=300)
     plt.close(fig)
     print(f"[+] Weighted effort bar chart saved to: {output_file}")
+
+
+def plot_unaffordable_bar(country_stats: list[tuple[str, float, int, int]],
+                         year: int, output_file: str):
+    """Bar chart: % of employment facing an infeasible mortgage (> threshold).
+
+    Each entry is (country_code, pct_unaffordable, n_regions_over, n_total).
+    """
+    country_stats = sorted(country_stats, key=lambda x: x[1])
+    countries = [cc for cc, _, _, _ in country_stats]
+    pcts = [p for _, p, _, _ in country_stats]
+    n_over = [n for _, _, n, _ in country_stats]
+    totals = [t for _, _, _, t in country_stats]
+    bar_color = COUNTRY_COLORS['IT']
+
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(countries)), 5), dpi=300)
+
+    bars = ax.bar(countries, pcts, color=bar_color, edgecolor='white',
+                  linewidth=0.8, width=0.6)
+    for bar, pct, n, total in zip(bars, pcts, n_over, totals):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                f'{pct:.0f}%\n({n}/{total} regions)',
+                ha='center', va='bottom', fontsize=10, fontweight='bold')
+
+    ax.set_ylabel('% of employment', fontsize=11, labelpad=10)
+    fig.suptitle(
+        f'Share of Workers Facing a Long (≥{MORTGAGE_THRESHOLD_YEARS}y) '
+        f'or Unaffordable Mortgage',
+        fontsize=13, fontweight='bold', y=0.98)
+    ax.set_title(f'{MORTGAGE_AREA_M2} m² ({year})', fontsize=10, pad=8)
+    ax.set_ylim(0, min(100, max(pcts) * 1.35))
+    ax.tick_params(axis='x', labelsize=12)
+
+    assumptions = (
+        f'{int(MORTGAGE_LTV * 100)}% LTV · {MORTGAGE_INTEREST * 100:.0f}% interest · '
+        f'{int(MORTGAGE_MAX_EFFORT_PCT * 100)}% of net salary '
+        f'(≈{int(GROSS_TO_NET_RATIO * 100)}% of gross)')
+    ax.text(0.98, 0.95, assumptions,
+            transform=ax.transAxes, fontsize=8, ha='right', va='top',
+            bbox=dict(boxstyle='round,pad=0.3', fc='lightyellow', ec='gray', alpha=0.8))
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] Unaffordable mortgage bar chart saved to: {output_file}")
 
 
 def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
@@ -2037,6 +2112,7 @@ def main():
                 df = add_tourism_intensity(df, tourism)
                 matched = df['nights_per_worker'].notna().sum()
                 print(f"  [{country}] Tourism data matched for {matched}/{len(df)} regions")
+            df = _add_mortgage_years(df)
             print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
             country_data.append((country, df, use_year))
         except (requests.exceptions.ConnectionError,
@@ -2116,7 +2192,7 @@ def main():
             )
             cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
                     'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
-                    'effort_months_per_m2']
+                    'effort_months_per_m2', 'mortgage_years_50m2']
             if args.tourism and 'nights_per_worker' in all_df.columns:
                 cols += ['tourist_nights', 'nights_per_worker']
             all_df = all_df[cols].sort_values(['country', 'nuts3'])
@@ -2169,6 +2245,19 @@ def main():
         if effort_by_country:
             bar_path = str(out_dir / f"weighted_effort_{year}.png")
             plot_weighted_effort_bar(effort_by_country, year, bar_path)
+
+        unaff_by_country = []
+        for cc, cdf, _ in country_data:
+            over = cdf['mortgage_years_50m2'] > MORTGAGE_THRESHOLD_YEARS
+            emp_over = cdf.loc[over, 'employment_ths'].sum()
+            emp_total = cdf['employment_ths'].sum()
+            if emp_total > 0:
+                pct = emp_over / emp_total * 100
+                n_over = int(over.sum())
+                unaff_by_country.append((cc, pct, n_over, len(cdf)))
+        if unaff_by_country:
+            bar_path = str(out_dir / f"unaffordable_mortgage_{year}.png")
+            plot_unaffordable_bar(unaff_by_country, year, bar_path)
 
         countries_used = [cc for cc, _, _ in country_data]
         source_rows = []
