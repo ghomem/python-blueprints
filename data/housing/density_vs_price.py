@@ -2190,7 +2190,11 @@ def main():
                 [df.assign(country=cc) for cc, df in combined],
                 ignore_index=True,
             )
+            all_df['side_km'] = np.sqrt(all_df['area_km2'])
+            all_df['worst_commute_km'] = all_df['side_km'] / 2
+            all_df['avg_commute_km'] = all_df['side_km'] / 4
             cols = ['country', 'nuts3', 'name', 'employment_ths', 'area_km2',
+                    'side_km', 'worst_commute_km', 'avg_commute_km',
                     'jobs_per_km2', 'price_eur_m2', 'avg_annual_wage',
                     'effort_months_per_m2', 'mortgage_years_50m2']
             if args.tourism and 'nights_per_worker' in all_df.columns:
