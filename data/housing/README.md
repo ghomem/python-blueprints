@@ -28,6 +28,9 @@ python3 density_vs_price.py 2023 --local-data --tourism
 
 # Same as above plus per-country map
 python3 density_vs_price.py 2023 --local-data --tourism --map
+
+# Often useful command
+python3 density_vs_price.py 2023 --local-data  --metric effort --map --tourism --highlight-outliers --countries ES,PT,FR,IT,NL --fit-multivar
 ```
 
 ### Options

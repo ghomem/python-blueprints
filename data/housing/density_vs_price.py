@@ -1378,7 +1378,7 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
                 'predicted_effort', 'pct_error', 'abs_pct_error']
     result = pool[out_cols].sort_values(['country', 'nuts3'])
 
-    csv_path = out_dir / f"multivar_fit_{year}.csv"
+    csv_path = out_dir / f"dvp_multivar_fit_{year}.csv"
     result.to_csv(csv_path, index=False, float_format='%.4f')
     print(f"[+] Multivariate fit saved to: {csv_path} ({len(result)} regions)")
 
@@ -1461,7 +1461,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
 
     fig.tight_layout()
-    png_path = out_dir / f"multivar_fit_summary_{year}.png"
+    png_path = out_dir / f"dvp_multivar_fit_summary_{year}.png"
     fig.savefig(png_path, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     print(f"[+] Fit summary table saved to: {png_path}")
@@ -2132,16 +2132,16 @@ def main():
 
         combined = []
         for country, df, use_year in country_data:
-            out = str(out_dir / f"{country}_density_vs_{slug}_{use_year}.png")
+            out = str(out_dir / f"dvp_{country}_density_vs_{slug}_{use_year}.png")
             stats = plot_scatter(
                 df, country, use_year, out, metric=metric, outliers=outliers,
                 tourism=args.tourism)
             if args.tourism and 'nights_per_worker' in df.columns:
-                tout = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}.png")
+                tout = str(out_dir / f"dvp_{country}_tourism_vs_{slug}_{use_year}.png")
                 plot_tourism_scatter([(country, df)], use_year, tout,
                                      metric=metric, outliers=outliers)
                 if outliers:
-                    tout_all = str(out_dir / f"{country}_tourism_vs_{slug}_{use_year}_all.png")
+                    tout_all = str(out_dir / f"dvp_{country}_tourism_vs_{slug}_{use_year}_all.png")
                     plot_tourism_scatter([(country, df)], use_year, tout_all,
                                          metric=metric, outliers=None)
             combined.append((country, df))
@@ -2163,7 +2163,7 @@ def main():
 
         if len(combined) > 1:
             tag = '_'.join(cc for cc, _ in combined)
-            out = str(out_dir / f"{tag}_density_vs_{slug}_{year}.png")
+            out = str(out_dir / f"dvp_{tag}_density_vs_{slug}_{year}.png")
             stats = plot_combined(
                 combined, year, out, metric=metric, outliers=outliers,
                 log_x=not args.linear_x, tourism=args.tourism)
@@ -2200,16 +2200,16 @@ def main():
             if args.tourism and 'nights_per_worker' in all_df.columns:
                 cols += ['tourist_nights', 'nights_per_worker']
             all_df = all_df[cols].sort_values(['country', 'nuts3'])
-            csv_path = out_dir / f"density_vs_{slug}_{year}.csv"
+            csv_path = out_dir / f"dvp_{slug}_{year}.csv"
             all_df.to_csv(csv_path, index=False, float_format='%.2f')
             print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
 
         if args.tourism and combined:
-            tout = str(out_dir / f"tourism_vs_{slug}_{year}.png")
+            tout = str(out_dir / f"dvp_tourism_vs_{slug}_{year}.png")
             plot_tourism_scatter(combined, year, tout, metric=metric,
                                  outliers=outliers)
             if outliers:
-                tout_all = str(out_dir / f"tourism_vs_{slug}_{year}_all.png")
+                tout_all = str(out_dir / f"dvp_tourism_vs_{slug}_{year}_all.png")
                 plot_tourism_scatter(combined, year, tout_all, metric=metric,
                                      outliers=None)
 
@@ -2223,7 +2223,7 @@ def main():
             all_vals = pd.concat([df for _, df, _ in country_data])['effort_months_per_m2'].dropna()
             vmin, vmax = all_vals.min(), all_vals.max()
         for country, df, use_year in country_data:
-            map_out = str(out_dir / f"{country}_effort_map_{use_year}.png")
+            map_out = str(out_dir / f"dvp_{country}_effort_map_{use_year}.png")
             plot_map(df, country, use_year, map_out, metric='effort',
                      vmin=vmin, vmax=vmax)
 
@@ -2235,7 +2235,7 @@ def main():
         summary_df = pd.DataFrame(summary_rows)
         summary_df['r2'] = summary_df['r2'].map(
             lambda v: f'{v:.4f}' if v is not None else '')
-        summary_path = out_dir / f"summary_{year}.csv"
+        summary_path = out_dir / f"dvp_summary_{year}.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"[+] Summary saved to: {summary_path}")
 
@@ -2247,7 +2247,7 @@ def main():
             and len(r['scope']) == 2
         ]
         if effort_by_country:
-            bar_path = str(out_dir / f"weighted_effort_{year}.png")
+            bar_path = str(out_dir / f"dvp_weighted_effort_{year}.png")
             plot_weighted_effort_bar(effort_by_country, year, bar_path)
 
         unaff_by_country = []
@@ -2260,7 +2260,7 @@ def main():
                 n_over = int(over.sum())
                 unaff_by_country.append((cc, pct, n_over, len(cdf)))
         if unaff_by_country:
-            bar_path = str(out_dir / f"unaffordable_mortgage_{year}.png")
+            bar_path = str(out_dir / f"dvp_unaffordable_mortgage_{year}.png")
             plot_unaffordable_bar(unaff_by_country, year, bar_path)
 
         countries_used = [cc for cc, _, _ in country_data]
@@ -2271,7 +2271,7 @@ def main():
                     'country': cc, 'data_type': dtype,
                     'source': desc, 'url': url,
                 })
-        sources_path = out_dir / "data_sources.csv"
+        sources_path = out_dir / "dvp_data_sources.csv"
         pd.DataFrame(source_rows).to_csv(sources_path, index=False)
         print(f"[+] Data sources saved to: {sources_path}")
 

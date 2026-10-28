@@ -596,7 +596,7 @@ def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
 def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
                   compare_year: int | None = None):
     """Compute concentration metrics for all EU-27 countries."""
-    csv_name = f"EU_concentration_{int(target_pct)}pct_{year}.csv"
+    csv_name = f"concentration_{int(target_pct)}pct_{year}.csv"
     cached = _load_csv(csv_name)
     if cached is not None:
         if min_regions > 0:
@@ -689,7 +689,7 @@ def _plot_concentration_scatter(df: pd.DataFrame, target_pct: float, year: int,
                  fontsize=13, fontweight='bold', pad=15)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    path = out_dir / f"EU_{slug}_vs_area{int(target_pct)}pct_{year}.png"
+    path = out_dir / f"concentration_{slug}_vs_area{int(target_pct)}pct_{year}.png"
     plt.savefig(path, dpi=300)
     plt.close(fig)
     print(f"[+] {title_metric.capitalize()} vs concentration scatter saved to: {path}")
@@ -723,7 +723,7 @@ def _plot_eu_bar(df, target_pct, year, out_dir, *, val_col, cmp_col,
     if has_cmp:
         ax.legend(fontsize=10, loc='upper right')
     fig.tight_layout()
-    path = out_dir / f"EU_target{int(target_pct)}pct_{slug}_{year}.png"
+    path = out_dir / f"concentration_target{int(target_pct)}pct_{slug}_{year}.png"
     plt.savefig(path, dpi=300)
     plt.close(fig)
     print(f"[+] {y_label} plot saved to: {path}")
@@ -899,7 +899,7 @@ def plot_top_regions(df: pd.DataFrame):
     fig.suptitle('Top Region Employment Share Trajectories — EU Countries',
                  fontsize=15, fontweight='bold', y=1.01)
     fig.tight_layout()
-    path1 = out_dir / "EU_top_region_trajectories.png"
+    path1 = out_dir / "concentration_top_region_trajectories.png"
     plt.savefig(path1, dpi=200, bbox_inches='tight')
     plt.close(fig)
     print(f"[+] Trajectories plot saved to: {path1}")
@@ -941,12 +941,12 @@ def plot_top_regions(df: pd.DataFrame):
 
     ax.grid(True, axis='x', linestyle='--', alpha=0.6)
     fig.tight_layout()
-    path2 = out_dir / "EU_top_region_delta.png"
+    path2 = out_dir / "concentration_top_region_delta.png"
     plt.savefig(path2, dpi=300)
     plt.close(fig)
     print(f"[+] Delta plot saved to: {path2}")
 
-    csv_path = out_dir / "EU_top_region_timeseries.csv"
+    csv_path = out_dir / "concentration_top_region_timeseries.csv"
     df.to_csv(csv_path, index=False)
     print(f"[+] CSV exported to: {csv_path}")
 
