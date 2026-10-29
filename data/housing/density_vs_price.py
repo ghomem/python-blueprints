@@ -140,6 +140,7 @@ _BG_COLOR: str | None = None    # set by --bg-color
 _BAR_COLOR: str | None = None   # set by --bar-color
 _MAP_CMAP: str | None = None    # set by --map-cmap
 _MAP_GAMMA: float | None = None # set by --map-gamma
+_MAP_VCENTER: float | None = None # set by --map-vcenter
 
 
 def _apply_bg():
@@ -1975,9 +1976,35 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         ax.set_xlim(bbox[0], bbox[2])
         ax.set_ylim(bbox[1], bbox[3])
 
-    from matplotlib.colors import Normalize, PowerNorm
+    from matplotlib.colors import Normalize
+    import numpy as np
+
+    class SymmetricGammaNorm(Normalize):
+        """Apply gamma symmetrically around vcenter using a single scale.
+
+        Equal data distances from vcenter produce equal color intensity
+        on both sides, regardless of the asymmetry of vmin/vmax.
+        """
+        def __init__(self, gamma, vmin, vmax, vcenter=None, clip=True):
+            self.gamma = gamma
+            self.vcenter = vcenter if vcenter is not None else (vmin + vmax) / 2
+            self.max_extent = max(abs(self.vcenter - vmin), abs(vmax - self.vcenter))
+            super().__init__(vmin=vmin, vmax=vmax, clip=clip)
+
+        def __call__(self, value, clip=None):
+            val = np.ma.asarray(value, dtype=float)
+            if clip is None:
+                clip = self.clip
+            if clip:
+                val = np.ma.clip(val, self.vmin, self.vmax)
+            d = (val - self.vcenter) / self.max_extent
+            signed_gamma = np.sign(d) * np.abs(d) ** self.gamma
+            x = 0.5 + 0.5 * signed_gamma
+            return np.ma.array(x, mask=getattr(val, 'mask', None))
+
     if _MAP_GAMMA is not None:
-        norm = PowerNorm(gamma=_MAP_GAMMA, vmin=vmin, vmax=vmax, clip=True)
+        norm = SymmetricGammaNorm(gamma=_MAP_GAMMA, vmin=vmin, vmax=vmax,
+                                  vcenter=_MAP_VCENTER)
     else:
         norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
 
@@ -2001,6 +2028,21 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
     sm.set_array([])
     cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
     cbar = fig.colorbar(sm, cax=cax)
+    if isinstance(norm, SymmetricGammaNorm):
+        n_ticks = 9
+        positions = np.linspace(0, 1, n_ticks)
+        g_inv = 1.0 / norm.gamma
+        me = norm.max_extent
+        vc = norm.vcenter
+        tick_vals = []
+        for p in positions:
+            s = 2 * p - 1  # map [0,1] to [-1,1]
+            d = np.sign(s) * np.abs(s) ** g_inv * me
+            v = vc + d
+            v = np.clip(v, norm.vmin, norm.vmax)
+            tick_vals.append(v)
+        cbar.set_ticks(tick_vals)
+        cbar.set_ticklabels([f'{v:.2f}' for v in tick_vals])
     cbar.set_label(mc['ylabel'], fontsize=10)
 
     # Region name labels at centroids
@@ -2071,7 +2113,9 @@ def main():
     parser.add_argument('--map-cmap', type=str, default=None,
                         help='Override colormap for choropleth maps (e.g. "RdYlBu_r", "coolwarm")')
     parser.add_argument('--map-gamma', type=float, default=None,
-                        help='Gamma for non-linear map color scale (<1 pushes mid values toward red)')
+                        help='Gamma for non-linear map color scale (<1 punches both extremes)')
+    parser.add_argument('--map-vcenter', type=float, default=None,
+                        help='Effort value that maps to white/midpoint of color scale')
     args = parser.parse_args()
 
     if args.fit_multivar:
@@ -2108,6 +2152,10 @@ def main():
     if args.map_gamma is not None:
         global _MAP_GAMMA
         _MAP_GAMMA = args.map_gamma
+
+    if args.map_vcenter is not None:
+        global _MAP_VCENTER
+        _MAP_VCENTER = args.map_vcenter
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers
