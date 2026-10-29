@@ -591,7 +591,9 @@ def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
                 break
 
         total_regions = len(regions)
-        area_dict = area_by_cc.get(cc, {})
+        emp_codes = {r['region_code'] for r in regions}
+        area_dict = {c: a for c, a in area_by_cc.get(cc, {}).items()
+                     if c in emp_codes}
         total_area = sum(area_dict.values())
         top_codes = [r['region_code'] for r in regions[:n_required]]
         top_area = sum(area_dict.get(c, 0) for c in top_codes)
