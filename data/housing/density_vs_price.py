@@ -1428,13 +1428,13 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
 
 
 def _plot_fit_summary(summary: list, year: int, out_dir: Path):
-    fig, ax = plt.subplots(figsize=(10, 1.2 + 0.45 * len(summary)), dpi=200)
+    n_rows = len(summary)
+    fig, ax = plt.subplots(figsize=(10, 0.65 + 0.40 * n_rows), dpi=200)
     ax.axis('off')
 
     col_labels = ['Country', 'a\n(ln density)', 'b\n(tourism)', 'c\n(intercept)',
                   'R²', 'N', 'MAPE\n(avg ± sd)', 'Accuracy\n(avg ± sd)']
     rows = []
-    colors = []
     for s in summary:
         acc = 100 - s['mape']
         rows.append([
@@ -1447,12 +1447,6 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
             f"{s['mape']:.1f} ± {s['mape_sd']:.1f}%",
             f"{acc:.1f} ± {s['mape_sd']:.1f}%",
         ])
-        if acc >= 90:
-            colors.append('#d4edda')
-        elif acc >= 85:
-            colors.append('#fff3cd')
-        else:
-            colors.append('#f8d7da')
 
     table = ax.table(
         cellText=rows, colLabels=col_labels,
@@ -1462,22 +1456,23 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     table.set_fontsize(10)
     table.scale(1, 1.9)
 
+    header_color = '#1a2332'
+    cell_color = _BG_COLOR or '#f5f0e8'
     for j in range(len(col_labels)):
         cell = table[0, j]
-        cell.set_facecolor('#2c3e50')
+        cell.set_facecolor(header_color)
         cell.set_text_props(color='white', fontweight='bold', fontsize=9)
 
-    for i, color in enumerate(colors):
+    for i in range(n_rows):
         for j in range(len(col_labels)):
-            table[i + 1, j].set_facecolor(color)
+            table[i + 1, j].set_facecolor(cell_color)
 
     title = (f"Purchase Effort — Two-Variable Fit ({year})\n"
              f"effort = a · ln(job density) + b · tourism nights/worker + c")
-    ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
 
-    fig.tight_layout()
     png_path = out_dir / f"dvp_multivar_fit_summary_{year}.png"
-    fig.savefig(png_path, bbox_inches='tight')
+    fig.savefig(png_path, bbox_inches='tight', pad_inches=0.15)
     plt.close(fig)
     print(f"[+] Fit summary table saved to: {png_path}")
 
