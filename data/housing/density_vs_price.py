@@ -150,6 +150,8 @@ def _apply_bg():
             'figure.facecolor': _BG_COLOR,
             'axes.facecolor': _BG_COLOR,
             'savefig.facecolor': _BG_COLOR,
+            'legend.facecolor': _BG_COLOR,
+            'legend.edgecolor': _BG_COLOR,
         })
 
 
@@ -1632,7 +1634,7 @@ def plot_unaffordable_bar(country_stats: list[tuple[str, float, int, int]],
         f'(≈{int(GROSS_TO_NET_RATIO * 100)}% of gross)')
     ax.text(0.98, 0.95, assumptions,
             transform=ax.transAxes, fontsize=8, ha='right', va='top',
-            bbox=dict(boxstyle='round,pad=0.3', fc='lightyellow', ec='gray', alpha=0.8))
+            bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
@@ -1706,7 +1708,7 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
         ax.text(0.95, 0.05,
                 f'{eq_label}\n$R^2 = {r2:.3f}$, RMSE $= {rmse:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
-                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+                bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
 
     ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
@@ -1807,13 +1809,13 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
         ax.text(0.95, info_y,
                 f'{eq_label}\n$R^2 = {r2:.3f}$, RMSE $= {rmse:.3f}$ ({r2_label})',
                 transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
-                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+                bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
         info_y += 0.08
     if tourism:
         ax.text(0.95, info_y,
                 f'Saturation = tourism intensity (0–{TOURISM_NPW_CAP} nights/worker/year)',
                 transform=ax.transAxes, fontsize=9, ha='right', va='bottom',
-                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+                bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
 
     countries_label = ' + '.join(cc for cc, _ in datasets)
     if log_x:
@@ -1823,7 +1825,8 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
     ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
-    ax.legend(fontsize=11, loc='upper right')
+    _lc = _BG_COLOR or '#f5f0e8'
+    ax.legend(fontsize=11, loc='upper right', facecolor=_lc, edgecolor=_lc)
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
@@ -1894,14 +1897,15 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
         if r2 is not None:
             ax.text(0.95, 0.05, f'$R^2 = {r2:.3f}$ ({r2_label})',
                     transform=ax.transAxes, fontsize=10, ha='right', va='bottom',
-                    bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='gray', alpha=0.8))
+                    bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
 
     ax.set_xlabel('Tourist nights / worker / year', fontsize=12)
     ax.set_ylabel(mc['ylabel'], fontsize=12)
     tag = '_'.join(cc for cc, _ in datasets)
     ax.set_title(f'Tourism Intensity vs {mc["title"]} — {tag} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold')
-    ax.legend(fontsize=10)
+    _lc = _BG_COLOR or '#f5f0e8'
+    ax.legend(fontsize=10, facecolor=_lc, edgecolor=_lc)
     fig.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close(fig)

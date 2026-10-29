@@ -39,6 +39,8 @@ def _apply_bg():
             'figure.facecolor': _BG_COLOR,
             'axes.facecolor': _BG_COLOR,
             'savefig.facecolor': _BG_COLOR,
+            'legend.facecolor': _BG_COLOR,
+            'legend.edgecolor': _BG_COLOR,
         })
 
 
@@ -736,7 +738,8 @@ def _plot_eu_bar(df, target_pct, year, out_dir, *, val_col, cmp_col,
         ax.text(i, row[val_col] + 0.5, label,
                 ha='center', fontsize=7, color='#333333')
     if has_cmp:
-        ax.legend(fontsize=10, loc='upper right')
+        _lc = _BG_COLOR or '#f5f0e8'
+        ax.legend(fontsize=10, loc='upper right', facecolor=_lc, edgecolor=_lc)
     fig.tight_layout()
     path = out_dir / f"concentration_target{int(target_pct)}pct_{slug}_{year}.png"
     plt.savefig(path, dpi=300)
@@ -903,7 +906,7 @@ def plot_top_regions(df: pd.DataFrame):
         ax.annotate(f"{last['share_pct']:.1f}%\n({sign}{delta:.1f}pp)",
                     xy=(1, 1), xycoords='axes fraction', ha='right', va='top',
                     fontsize=8, fontweight='bold', color=color,
-                    bbox=dict(boxstyle='round,pad=0.2', fc='white', ec=color, alpha=0.8))
+                    bbox=dict(boxstyle='round,pad=0.2', fc=_BG_COLOR or '#f5f0e8', ec=color, alpha=0.8))
 
         y_min = cdf['share_pct'].min()
         y_max = cdf['share_pct'].max()
