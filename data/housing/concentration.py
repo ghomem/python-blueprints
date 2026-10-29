@@ -1003,10 +1003,18 @@ def share_delta_analysis(countries: list[str],
                      for r in yr_data}
         cmp_shares = {r['region_code']: r['employment'] / cmp_total * 100
                       for r in cmp_data}
+        yr_emp = {r['region_code']: r['employment'] for r in yr_data}
+        cmp_emp = {r['region_code']: r['employment'] for r in cmp_data}
         names = {r['region_code']: r['region_name'] for r in yr_data}
 
         common = set(yr_shares) & set(cmp_shares)
         for code in common:
+            if code.endswith('ZZZ') or code.startswith('FRY'):
+                continue
+            emp_start = cmp_emp[code]
+            emp_end = yr_emp[code]
+            emp_change_pct = ((emp_end - emp_start) / emp_start * 100
+                              if emp_start > 0 else None)
             rows.append({
                 'country': cc,
                 'nuts3': code,
@@ -1014,17 +1022,39 @@ def share_delta_analysis(countries: list[str],
                 'share_start': cmp_shares[code],
                 'share_end': yr_shares[code],
                 'share_delta_pp': yr_shares[code] - cmp_shares[code],
+                'emp_start': emp_start,
+                'emp_end': emp_end,
+                'emp_change_pct': emp_change_pct,
             })
 
     return pd.DataFrame(rows)
 
 
+_SHARE_DELTA_MAP = {
+    'value_col': 'share_delta_pp',
+    'file_tag': 'share_delta',
+    'title_prefix': 'Employment Share Change',
+    'colorbar_label': 'Change in employment share (pp)',
+}
+_EMP_CHANGE_MAP = {
+    'value_col': 'emp_change_pct',
+    'file_tag': 'emp_change',
+    'title_prefix': 'Employment Change',
+    'colorbar_label': 'Change in employment (%)',
+}
+
+
 def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
                           year: int, compare_year: int,
+                          metrics: list[str] | None = None,
                           cmap_spec: str = '#2166ac,#ffffff,#b2182b',
                           gamma: float = 0.4):
-    """Choropleth maps of employment share change per NUTS-3 region."""
+    """Choropleth maps of employment change per NUTS-3 region."""
     from map_utils import fetch_nuts3_geometry, plot_choropleth
+
+    if metrics is None:
+        metrics = ['share_delta']
+    metric_defs = {'share_delta': _SHARE_DELTA_MAP, 'emp_change': _EMP_CHANGE_MAP}
 
     out_dir = Path(tempfile.gettempdir()) / "concentration"
     out_dir.mkdir(exist_ok=True)
@@ -1034,39 +1064,44 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
 
     gdf = fetch_nuts3_geometry()
 
-    vals = df['share_delta_pp'].dropna()
-    extent = max(abs(vals.min()), abs(vals.max()))
-    vmin, vmax = -extent, extent
+    for mkey in metrics:
+        mdef = metric_defs[mkey]
+        vcol = mdef['value_col']
+        vals = df[vcol].dropna()
+        extent = max(abs(vals.min()), abs(vals.max()))
+        vmin, vmax = -extent, extent
 
-    for cc in countries:
-        cc = cc.upper()
-        cdf = df[df['country'] == cc]
-        if cdf.empty:
-            print(f"  [!] No data for {cc}, skipping map")
-            continue
+        for cc in countries:
+            cc = cc.upper()
+            cdf = df[df['country'] == cc]
+            if cdf.empty:
+                print(f"  [!] No data for {cc}, skipping map")
+                continue
 
-        out_path = str(out_dir / f"concentration_{cc}_share_delta_{compare_year}_{year}.png")
+            out_path = str(out_dir / f"concentration_{cc}_{mdef['file_tag']}_{compare_year}_{year}.png")
 
-        def _delta_text_color(val):
-            return 'white' if abs(val) > extent * 0.7 else '#333333'
+            threshold = extent * 0.7
 
-        plot_choropleth(
-            gdf=gdf,
-            data_df=cdf,
-            country=cc,
-            value_col='share_delta_pp',
-            merge_left='NUTS_ID',
-            merge_right='nuts3',
-            title=f'Employment Share Change — {cc} NUTS-3 ({compare_year}–{year})',
-            colorbar_label='Change in employment share (pp)',
-            output_file=out_path,
-            vmin=vmin, vmax=vmax, vcenter=0.0,
-            gamma=gamma,
-            cmap_spec=cmap_spec,
-            bg_color=_BG_COLOR,
-            label_fontsize_override={'FR': 5, 'ES': 5},
-            text_color_fn=_delta_text_color,
-        )
+            def _text_color(val, _t=threshold):
+                return 'white' if abs(val) > _t else '#333333'
+
+            plot_choropleth(
+                gdf=gdf,
+                data_df=cdf,
+                country=cc,
+                value_col=vcol,
+                merge_left='NUTS_ID',
+                merge_right='nuts3',
+                title=f'{mdef["title_prefix"]} — {cc} NUTS-3 ({compare_year}–{year})',
+                colorbar_label=mdef['colorbar_label'],
+                output_file=out_path,
+                vmin=vmin, vmax=vmax, vcenter=0.0,
+                gamma=gamma,
+                cmap_spec=cmap_spec,
+                bg_color=_BG_COLOR,
+                label_fontsize_override={'FR': 5, 'ES': 5},
+                text_color_fn=_text_color,
+            )
 
 
 def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
@@ -1259,6 +1294,8 @@ def main():
                              help="Colormap (comma-separated hex)")
     smap_parser.add_argument("--map-gamma", type=float, default=0.4,
                              help="Gamma for symmetric norm (default: 0.4)")
+    smap_parser.add_argument("--metrics", type=str, default="share_delta,emp_change",
+                             help="Comma-separated metrics: share_delta, emp_change (default: both)")
 
     list_parser = subparsers.add_parser("list-regions",
                                         help="List all NUTS-3 regions for a country")
@@ -1338,8 +1375,10 @@ def main():
         if df.empty:
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
+        metrics = [m.strip() for m in args.metrics.split(',')]
         plot_share_delta_maps(df, countries, year=args.year,
                               compare_year=args.compare_year,
+                              metrics=metrics,
                               cmap_spec=args.map_cmap,
                               gamma=args.map_gamma)
 
