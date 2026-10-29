@@ -136,6 +136,17 @@ import requests
 
 INPUT_DIR: Path | None = None   # set by --local-data / --save-data
 SAVE_MODE: bool = False         # True when --save-data is active
+_BG_COLOR: str | None = None    # set by --bg-color
+
+
+def _apply_bg():
+    """Re-apply --bg-color after plt.style.use (which resets rcParams)."""
+    if _BG_COLOR:
+        plt.rcParams.update({
+            'figure.facecolor': _BG_COLOR,
+            'axes.facecolor': _BG_COLOR,
+            'savefig.facecolor': _BG_COLOR,
+        })
 
 
 def _local_path(country: str, kind: str) -> Path:
@@ -1462,7 +1473,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
 
     fig.tight_layout()
     png_path = out_dir / f"dvp_multivar_fit_summary_{year}.png"
-    fig.savefig(png_path, bbox_inches='tight', facecolor='white')
+    fig.savefig(png_path, bbox_inches='tight')
     plt.close(fig)
     print(f"[+] Fit summary table saved to: {png_path}")
 
@@ -1559,6 +1570,7 @@ def plot_weighted_effort_bar(country_efforts: list[tuple[str, float]],
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(countries)), 5), dpi=300)
 
     bars = ax.bar(countries, efforts, color=bar_color, edgecolor='white',
@@ -1596,6 +1608,7 @@ def plot_unaffordable_bar(country_stats: list[tuple[str, float, int, int]],
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(countries)), 5), dpi=300)
 
     bars = ax.bar(countries, pcts, color=bar_color, edgecolor='white',
@@ -1632,6 +1645,7 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
                  metric: str = 'effort', outliers: str | None = None,
                  tourism: bool = False):
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
     mc = METRIC_CONFIG[metric]
@@ -1712,6 +1726,7 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
                   log_x: bool = True, tourism: bool = False):
     """Combined scatter plot for multiple countries, using region names as labels."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(16, 10), dpi=300)
 
     mc = METRIC_CONFIG[metric]
@@ -1829,6 +1844,7 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
                          outliers: str | None = None):
     """Scatter of a housing metric (Y) vs tourism intensity (X), all countries."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
 
     mc = METRIC_CONFIG[metric]
@@ -2035,6 +2051,8 @@ def main():
     parser.add_argument('--map', action='store_true',
                         help='Choropleth map of purchase effort by NUTS-3 region '
                              '(mainland only). Colour scale calibrated to PT+ES range.')
+    parser.add_argument('--bg-color', type=str, default=None,
+                        help='Background color for all plots (e.g. "#f5f0e8")')
     args = parser.parse_args()
 
     if args.fit_multivar:
@@ -2054,6 +2072,11 @@ def main():
         INPUT_DIR = Path(args.save_data)
         INPUT_DIR.mkdir(parents=True, exist_ok=True)
         SAVE_MODE = True
+
+    if args.bg_color:
+        global _BG_COLOR
+        _BG_COLOR = args.bg_color
+        _apply_bg()
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers

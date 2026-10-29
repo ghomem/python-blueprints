@@ -23,6 +23,17 @@ import requests
 
 INPUT_DIR: Path | None = None
 SAVE_MODE: bool = False
+_BG_COLOR: str | None = None
+
+
+def _apply_bg():
+    """Re-apply --bg-color after plt.style.use (which resets rcParams)."""
+    if _BG_COLOR:
+        plt.rcParams.update({
+            'figure.facecolor': _BG_COLOR,
+            'axes.facecolor': _BG_COLOR,
+            'savefig.facecolor': _BG_COLOR,
+        })
 
 COICOP_TOP = [
     ('CP01', 'Food'),
@@ -128,6 +139,7 @@ def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(codes)), 5), dpi=300)
 
     bars = ax.bar(codes, pcts, color=bar_color, edgecolor='white',
@@ -177,6 +189,8 @@ def cmd_expenditure(args):
 def main():
     parser = argparse.ArgumentParser(
         description="Miscellaneous housing-related charts")
+    parser.add_argument('--bg-color', type=str, default=None,
+                        help='Background color for all plots (e.g. "#f5f0e8")')
     sub = parser.add_subparsers(dest='command')
 
     exp = sub.add_parser('expenditure', help='Household expenditure breakdown')
@@ -195,6 +209,11 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.bg_color:
+        global _BG_COLOR
+        _BG_COLOR = args.bg_color
+        _apply_bg()
 
     if hasattr(args, 'local_data') and args.local_data:
         global INPUT_DIR, SAVE_MODE

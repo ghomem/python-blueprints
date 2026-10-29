@@ -27,6 +27,17 @@ import requests
 
 INPUT_DIR: Path | None = None
 SAVE_MODE: bool = False
+_BG_COLOR: str | None = None
+
+
+def _apply_bg():
+    """Re-apply --bg-color after plt.style.use (which resets rcParams)."""
+    if _BG_COLOR:
+        plt.rcParams.update({
+            'figure.facecolor': _BG_COLOR,
+            'axes.facecolor': _BG_COLOR,
+            'savefig.facecolor': _BG_COLOR,
+        })
 
 
 def _save_csv(df: pd.DataFrame, name: str):
@@ -331,6 +342,7 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
                       area: dict[str, float] | None = None):
     """Bar chart of regional employment shares with cumulative line for the latest year."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
 
     cc = country_code.upper()
     latest_year = raw_df['year'].max()
@@ -733,6 +745,7 @@ def plot_eu_comparison(df: pd.DataFrame, target_pct: float, year: int,
                        compare_year: int | None = None):
     """Bar charts + scatter plots for the EU comparison."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     out_dir = Path(tempfile.gettempdir()) / "concentration"
     out_dir.mkdir(exist_ok=True)
 
@@ -859,6 +872,7 @@ def plot_top_regions(df: pd.DataFrame):
     out_dir = Path(tempfile.gettempdir()) / "concentration"
     out_dir.mkdir(exist_ok=True)
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
 
     countries = sorted(df['country'].unique())
     n = len(countries)
@@ -967,6 +981,7 @@ def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
         if r['year'] in totals.index and totals[r['year']] > 0 else 0, axis=1)
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     fig, ax1 = plt.subplots(figsize=(12, 6), dpi=300)
 
     color1 = '#1f77b4'
@@ -1028,6 +1043,7 @@ def default_output_path(country_code: str, mode: str, val, suffix: str = "") -> 
 def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: float, output_file: str):
     """Generates time-series visualization."""
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+    _apply_bg()
     fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
 
     cc = country_code.upper()
@@ -1081,6 +1097,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Measure NUTS-3 regional employment concentration over time."
     )
+    parser.add_argument('--bg-color', type=str, default=None,
+                        help='Background color for all plots (e.g. "#f5f0e8")')
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     cr_parser = subparsers.add_parser("cr", help="Concentration ratio of top n regions")
@@ -1122,6 +1140,11 @@ def main():
     list_parser.add_argument("country", type=str, help="2-letter EU country code")
 
     args = parser.parse_args()
+
+    if args.bg_color:
+        global _BG_COLOR
+        _BG_COLOR = args.bg_color
+        _apply_bg()
 
     if args.mode == 'list-regions':
         raw_df = fetch_eurostat_data(args.country)
