@@ -2027,8 +2027,17 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
-    cbar = fig.colorbar(sm, cax=cax)
     if isinstance(norm, SymmetricGammaNorm):
+        gradient = np.linspace(0, 1, 256).reshape(-1, 1)
+        if isinstance(cmap, str):
+            cmap_obj = plt.cm.get_cmap(cmap)
+        else:
+            cmap_obj = cmap
+        cax.imshow(gradient, aspect='auto', cmap=cmap_obj, origin='lower',
+                   extent=[0, 1, 0, 1])
+        cax.set_xlim(0, 1)
+        cax.set_ylim(0, 1)
+        cax.xaxis.set_visible(False)
         n_ticks = 9
         positions = np.linspace(0, 1, n_ticks)
         g_inv = 1.0 / norm.gamma
@@ -2036,14 +2045,19 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         vc = norm.vcenter
         tick_vals = []
         for p in positions:
-            s = 2 * p - 1  # map [0,1] to [-1,1]
+            s = 2 * p - 1
             d = np.sign(s) * np.abs(s) ** g_inv * me
             v = vc + d
             v = np.clip(v, norm.vmin, norm.vmax)
             tick_vals.append(v)
-        cbar.set_ticks(tick_vals)
-        cbar.set_ticklabels([f'{v:.2f}' for v in tick_vals])
-    cbar.set_label(mc['ylabel'], fontsize=10)
+        cax.set_yticks(positions)
+        cax.set_yticklabels([f'{v:.2f}' for v in tick_vals])
+        cax.yaxis.set_ticks_position('right')
+        cax.yaxis.set_label_position('right')
+        cax.set_ylabel(mc['ylabel'], fontsize=10)
+    else:
+        cbar = fig.colorbar(sm, cax=cax)
+        cbar.set_label(mc['ylabel'], fontsize=10)
 
     # Region name labels at centroids
     for _, row in merged.iterrows():
