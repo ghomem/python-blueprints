@@ -18,6 +18,7 @@ MAINLAND_BBOX = {
     'PT': (-9.7, 36.9, -6.0, 42.2),
     'ES': (-9.5, 35.8, 3.4, 43.9),
     'FR': (-5.3, 41.2, 9.7, 51.2),
+    'IT': (6.5, 36.5, 18.7, 47.2),
     'NL': (3.2, 50.6, 7.4, 53.7),
 }
 
@@ -80,6 +81,7 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
                     vmin: float = None, vmax: float = None,
                     vcenter: float = None,
                     gamma: float = None,
+                    norm=None,
                     cmap_spec: str = 'YlOrRd',
                     bg_color: str | None = None,
                     label_regions: bool = True,
@@ -141,11 +143,12 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
         ax.set_xlim(bbox[0], bbox[2])
         ax.set_ylim(bbox[1], bbox[3])
 
-    if gamma is not None:
-        norm = SymmetricGammaNorm(gamma=gamma, vmin=vmin, vmax=vmax,
-                                  vcenter=vcenter)
-    else:
-        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
+    if norm is None:
+        if gamma is not None:
+            norm = SymmetricGammaNorm(gamma=gamma, vmin=vmin, vmax=vmax,
+                                      vcenter=vcenter)
+        else:
+            norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
 
     no_data = merged[merged[value_col].isna()]
     if not no_data.empty:
@@ -165,27 +168,33 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
     # Colorbar
     cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
     if isinstance(norm, SymmetricGammaNorm):
-        gradient = np.linspace(0, 1, 256).reshape(-1, 1)
         cmap_obj = plt.cm.get_cmap(cmap) if isinstance(cmap, str) else cmap
+        pos_lo = float(norm(norm.vmin))
+        pos_hi = float(norm(norm.vmax))
+        gradient = np.linspace(pos_lo, pos_hi, 256).reshape(-1, 1)
         cax.imshow(gradient, aspect='auto', cmap=cmap_obj, origin='lower',
-                   extent=[0, 1, 0, 1])
+                   extent=[0, 1, pos_lo, pos_hi])
         cax.set_xlim(0, 1)
-        cax.set_ylim(0, 1)
+        cax.set_ylim(pos_lo, pos_hi)
         cax.xaxis.set_visible(False)
-        n_ticks = 9
-        positions = np.linspace(0, 1, n_ticks)
         g_inv = 1.0 / norm.gamma
         me = norm.max_extent
         vc = norm.vcenter
+        n_ticks = 9
+        positions = np.linspace(pos_lo, pos_hi, n_ticks)
         tick_vals = []
         for p in positions:
             s = 2 * p - 1
             d = np.sign(s) * np.abs(s) ** g_inv * me
-            v = vc + d
-            v = np.clip(v, norm.vmin, norm.vmax)
-            tick_vals.append(v)
+            tick_vals.append(vc + d)
+        fmt = lambda v: f'{v:.0f}' if abs(v) >= 10 else f'{v:.2f}'
+        labels = [fmt(v) for v in tick_vals]
+        asymmetric = pos_lo > 0.01 or pos_hi < 0.99
+        if asymmetric:
+            labels[0] = '≤' + labels[0]
+            labels[-1] = '≥' + labels[-1]
         cax.set_yticks(positions)
-        cax.set_yticklabels([f'{v:.2f}' for v in tick_vals])
+        cax.set_yticklabels(labels)
         cax.yaxis.set_ticks_position('right')
         cax.yaxis.set_label_position('right')
         cax.set_ylabel(colorbar_label, fontsize=10)

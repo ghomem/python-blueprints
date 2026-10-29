@@ -1917,6 +1917,38 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
 # ---------------------------------------------------------------------------
 
 
+_DENSITY_VMIN = 29    # Soria — full blue reference
+_DENSITY_VCENTER = 100
+_DENSITY_VMAX = 1011  # Grande Lisboa — full red reference
+
+
+def plot_density_map(df: pd.DataFrame, country: str, year: int,
+                     output_file: str, vmin: float = None, vmax: float = None):
+    """Choropleth map of employment density (jobs/km²) for one country."""
+    from map_utils import fetch_nuts3_geometry, plot_choropleth
+
+    gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+
+    plot_choropleth(
+        gdf=gdf,
+        data_df=df,
+        country=country,
+        value_col='jobs_per_km2',
+        merge_left='NUTS_ID',
+        merge_right='nuts3',
+        title=f'Employment density — {country.upper()} NUTS-3 ({year})',
+        colorbar_label='Jobs / km²',
+        output_file=output_file,
+        vmin=vmin or _DENSITY_VMIN,
+        vmax=vmax or _DENSITY_VMAX,
+        vcenter=_DENSITY_VCENTER,
+        gamma=_MAP_GAMMA or 0.4,
+        cmap_spec=_MAP_CMAP or 'YlOrRd',
+        bg_color=_BG_COLOR,
+        label_fontsize_override={'FR': 5, 'ES': 5},
+    )
+
+
 def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
              metric: str = 'effort', vmin: float = None, vmax: float = None):
     """Choropleth map of a metric for one country's NUTS-3 regions."""
@@ -1985,6 +2017,9 @@ def main():
     parser.add_argument('--map', action='store_true',
                         help='Choropleth map of purchase effort by NUTS-3 region '
                              '(mainland only). Colour scale calibrated to PT+ES range.')
+    parser.add_argument('--map-density', action='store_true',
+                        help='Choropleth map of employment density (jobs/km²) by '
+                             'NUTS-3 region (mainland only). Uses log scale.')
     parser.add_argument('--bg-color', type=str, default=None,
                         help='Background color for all plots (e.g. "#f5f0e8")')
     parser.add_argument('--bar-color', type=str, default=None,
@@ -2207,6 +2242,11 @@ def main():
             map_out = str(out_dir / f"dvp_{country}_effort_map_{use_year}.png")
             plot_map(df, country, use_year, map_out, metric='effort',
                      vmin=vmin, vmax=vmax)
+
+    if args.map_density and country_data:
+        for country, df, use_year in country_data:
+            map_out = str(out_dir / f"dvp_{country}_density_map_{use_year}.png")
+            plot_density_map(df, country, use_year, map_out)
 
     if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")
