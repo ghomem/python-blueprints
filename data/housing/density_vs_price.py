@@ -1917,169 +1917,35 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
 # ---------------------------------------------------------------------------
 
 
-# Mainland bounding boxes (lon_min, lat_min, lon_max, lat_max)
-_MAINLAND_BBOX = {
-    'PT': (-9.7, 36.9, -6.0, 42.2),
-    'ES': (-9.5, 35.8, 3.4, 43.9),
-    'FR': (-5.3, 41.2, 9.7, 51.2),
-    'NL': (3.2, 50.6, 7.4, 53.7),
-}
-
-
-_NUTS3_GEOJSON = "NUTS_RG_10M_2024_4326_LEVL_3.geojson"
-
-
-def _fetch_nuts3_geometry():
-    """Download (and cache) NUTS-3 boundaries from Eurostat GISCO (NUTS 2024)."""
-    import geopandas as gpd
-    local = INPUT_DIR / _NUTS3_GEOJSON if INPUT_DIR else None
-    if local and local.exists():
-        print(f"  [local] {local}")
-        return gpd.read_file(local)
-    cache = Path(tempfile.gettempdir()) / _NUTS3_GEOJSON
-    if not cache.exists():
-        url = ("https://gisco-services.ec.europa.eu/distribution/v2/nuts/"
-               "geojson/" + _NUTS3_GEOJSON)
-        print("[+] Downloading NUTS-3 boundaries (GISCO)...", flush=True)
-        resp = requests.get(url, timeout=60)
-        resp.raise_for_status()
-        cache.write_bytes(resp.content)
-    if SAVE_MODE and local:
-        import shutil
-        shutil.copy2(cache, local)
-        print(f"  [saved] {local}")
-    return gpd.read_file(cache)
-
-
 def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
              metric: str = 'effort', vmin: float = None, vmax: float = None):
     """Choropleth map of a metric for one country's NUTS-3 regions."""
-    import geopandas as gpd
+    from map_utils import fetch_nuts3_geometry, plot_choropleth
 
     mc = METRIC_CONFIG[metric]
-    y_col = mc['y_col']
-    cc = country.upper()
+    gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
 
-    gdf = _fetch_nuts3_geometry()
-    geo = gdf[gdf['CNTR_CODE'] == cc].copy()
+    def _effort_text_color(val):
+        return 'white' if val >= 1.75 else '#333333'
 
-    merged = geo.merge(df[['nuts3', y_col]], left_on='NUTS_ID', right_on='nuts3',
-                        how='left')
-
-    bbox = _MAINLAND_BBOX.get(cc)
-    if bbox:
-        merged = merged.cx[bbox[0]:bbox[2], bbox[1]:bbox[3]]
-
-    fig, ax = plt.subplots(figsize=(10, 10), dpi=300)
-    if bbox:
-        ax.set_xlim(bbox[0], bbox[2])
-        ax.set_ylim(bbox[1], bbox[3])
-
-    from matplotlib.colors import Normalize
-    import numpy as np
-
-    class SymmetricGammaNorm(Normalize):
-        """Apply gamma symmetrically around vcenter using a single scale.
-
-        Equal data distances from vcenter produce equal color intensity
-        on both sides, regardless of the asymmetry of vmin/vmax.
-        """
-        def __init__(self, gamma, vmin, vmax, vcenter=None, clip=True):
-            self.gamma = gamma
-            self.vcenter = vcenter if vcenter is not None else (vmin + vmax) / 2
-            self.max_extent = max(abs(self.vcenter - vmin), abs(vmax - self.vcenter))
-            super().__init__(vmin=vmin, vmax=vmax, clip=clip)
-
-        def __call__(self, value, clip=None):
-            val = np.ma.asarray(value, dtype=float)
-            if clip is None:
-                clip = self.clip
-            if clip:
-                val = np.ma.clip(val, self.vmin, self.vmax)
-            d = (val - self.vcenter) / self.max_extent
-            signed_gamma = np.sign(d) * np.abs(d) ** self.gamma
-            x = 0.5 + 0.5 * signed_gamma
-            return np.ma.array(x, mask=getattr(val, 'mask', None))
-
-    if _MAP_GAMMA is not None:
-        norm = SymmetricGammaNorm(gamma=_MAP_GAMMA, vmin=vmin, vmax=vmax,
-                                  vcenter=_MAP_VCENTER)
-    else:
-        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
-
-    no_data = merged[merged[y_col].isna()]
-    if not no_data.empty:
-        no_data.plot(ax=ax, color='#e0e0e0', edgecolor='white', linewidth=0.5)
-
-    from matplotlib.colors import LinearSegmentedColormap
-    cmap_spec = _MAP_CMAP or 'YlOrRd'
-    if ',' in str(cmap_spec):
-        hex_colors = [c.strip() for c in cmap_spec.split(',')]
-        cmap = LinearSegmentedColormap.from_list('custom', hex_colors, N=256)
-    else:
-        cmap = cmap_spec
-    has_data = merged[merged[y_col].notna()]
-    if not has_data.empty:
-        has_data.plot(ax=ax, column=y_col, cmap=cmap, norm=norm,
-                      edgecolor='white', linewidth=0.5, legend=False)
-
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
-    cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
-    if isinstance(norm, SymmetricGammaNorm):
-        gradient = np.linspace(0, 1, 256).reshape(-1, 1)
-        if isinstance(cmap, str):
-            cmap_obj = plt.cm.get_cmap(cmap)
-        else:
-            cmap_obj = cmap
-        cax.imshow(gradient, aspect='auto', cmap=cmap_obj, origin='lower',
-                   extent=[0, 1, 0, 1])
-        cax.set_xlim(0, 1)
-        cax.set_ylim(0, 1)
-        cax.xaxis.set_visible(False)
-        n_ticks = 9
-        positions = np.linspace(0, 1, n_ticks)
-        g_inv = 1.0 / norm.gamma
-        me = norm.max_extent
-        vc = norm.vcenter
-        tick_vals = []
-        for p in positions:
-            s = 2 * p - 1
-            d = np.sign(s) * np.abs(s) ** g_inv * me
-            v = vc + d
-            v = np.clip(v, norm.vmin, norm.vmax)
-            tick_vals.append(v)
-        cax.set_yticks(positions)
-        cax.set_yticklabels([f'{v:.2f}' for v in tick_vals])
-        cax.yaxis.set_ticks_position('right')
-        cax.yaxis.set_label_position('right')
-        cax.set_ylabel(mc['ylabel'], fontsize=10)
-    else:
-        cbar = fig.colorbar(sm, cax=cax)
-        cbar.set_label(mc['ylabel'], fontsize=10)
-
-    # Region name labels at centroids
-    for _, row in merged.iterrows():
-        if row.geometry is None:
-            continue
-        c = row.geometry.centroid
-        name = row.get('NAME_LATN', '')
-        if not name:
-            continue
-        fontsize = 5 if cc in ('FR', 'ES') else 6
-        val = row.get(y_col, None)
-        txt_color = 'white' if (val is not None and val >= 1.75) else '#333333'
-        ax.text(c.x, c.y, name, fontsize=fontsize, ha='center', va='center',
-                color=txt_color, fontweight='medium')
-
-    ax.set_title(f'{mc["title"]} — {cc} NUTS-3 ({year})',
-                 fontsize=14, fontweight='bold')
-    ax.set_axis_off()
-    ax.set_aspect('equal')
-
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"[+] Map saved to: {output_file}")
+    plot_choropleth(
+        gdf=gdf,
+        data_df=df,
+        country=country,
+        value_col=mc['y_col'],
+        merge_left='NUTS_ID',
+        merge_right='nuts3',
+        title=f'{mc["title"]} — {country.upper()} NUTS-3 ({year})',
+        colorbar_label=mc['ylabel'],
+        output_file=output_file,
+        vmin=vmin, vmax=vmax,
+        vcenter=_MAP_VCENTER,
+        gamma=_MAP_GAMMA,
+        cmap_spec=_MAP_CMAP or 'YlOrRd',
+        bg_color=_BG_COLOR,
+        label_fontsize_override={'FR': 5, 'ES': 5},
+        text_color_fn=_effort_text_color,
+    )
 
 
 def main():

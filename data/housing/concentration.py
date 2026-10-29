@@ -975,6 +975,100 @@ def plot_top_regions(df: pd.DataFrame):
     print(f"[+] CSV exported to: {csv_path}")
 
 
+def share_delta_analysis(countries: list[str],
+                         year: int = 2023,
+                         compare_year: int = 2000,
+                         min_regions: int = 5) -> pd.DataFrame:
+    """Compute per-NUTS-3 employment share change between two years."""
+    print(f"[+] Computing employment share delta {compare_year}–{year}...", flush=True)
+    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
+                                  wstatus="EMP", nace_r2="TOTAL")
+    all_years_data = _extract_all_nuts3_all_years(emp_raw)
+
+    rows = []
+    for cc in countries:
+        cc = cc.upper()
+        yr_data = all_years_data.get(year, {}).get(cc, [])
+        cmp_data = all_years_data.get(compare_year, {}).get(cc, [])
+        if len(yr_data) < min_regions or len(cmp_data) < min_regions:
+            print(f"  [!] {cc}: not enough regions ({len(yr_data)}/{len(cmp_data)}), skipping")
+            continue
+
+        yr_total = sum(r['employment'] for r in yr_data)
+        cmp_total = sum(r['employment'] for r in cmp_data)
+        if yr_total == 0 or cmp_total == 0:
+            continue
+
+        yr_shares = {r['region_code']: r['employment'] / yr_total * 100
+                     for r in yr_data}
+        cmp_shares = {r['region_code']: r['employment'] / cmp_total * 100
+                      for r in cmp_data}
+        names = {r['region_code']: r['region_name'] for r in yr_data}
+
+        common = set(yr_shares) & set(cmp_shares)
+        for code in common:
+            rows.append({
+                'country': cc,
+                'nuts3': code,
+                'region_name': names.get(code, code),
+                'share_start': cmp_shares[code],
+                'share_end': yr_shares[code],
+                'share_delta_pp': yr_shares[code] - cmp_shares[code],
+            })
+
+    return pd.DataFrame(rows)
+
+
+def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
+                          year: int, compare_year: int,
+                          cmap_spec: str = '#2166ac,#ffffff,#b2182b',
+                          gamma: float = 0.4):
+    """Choropleth maps of employment share change per NUTS-3 region."""
+    from map_utils import fetch_nuts3_geometry, plot_choropleth
+
+    out_dir = Path(tempfile.gettempdir()) / "concentration"
+    out_dir.mkdir(exist_ok=True)
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    _apply_bg()
+
+    gdf = fetch_nuts3_geometry()
+
+    vals = df['share_delta_pp'].dropna()
+    extent = max(abs(vals.min()), abs(vals.max()))
+    vmin, vmax = -extent, extent
+
+    for cc in countries:
+        cc = cc.upper()
+        cdf = df[df['country'] == cc]
+        if cdf.empty:
+            print(f"  [!] No data for {cc}, skipping map")
+            continue
+
+        out_path = str(out_dir / f"concentration_{cc}_share_delta_{compare_year}_{year}.png")
+
+        def _delta_text_color(val):
+            return 'white' if abs(val) > extent * 0.7 else '#333333'
+
+        plot_choropleth(
+            gdf=gdf,
+            data_df=cdf,
+            country=cc,
+            value_col='share_delta_pp',
+            merge_left='NUTS_ID',
+            merge_right='nuts3',
+            title=f'Employment Share Change — {cc} NUTS-3 ({compare_year}–{year})',
+            colorbar_label='Change in employment share (pp)',
+            output_file=out_path,
+            vmin=vmin, vmax=vmax, vcenter=0.0,
+            gamma=gamma,
+            cmap_spec=cmap_spec,
+            bg_color=_BG_COLOR,
+            label_fontsize_override={'FR': 5, 'ES': 5},
+            text_color_fn=_delta_text_color,
+        )
+
+
 def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
     """Dual-axis time series: nominal employment and share of national total."""
     cc = nuts3[:2]
@@ -1151,6 +1245,21 @@ def main():
     cap_parser.add_argument("--year", type=int, default=None,
                             help="Cap time series at this year (default: use all available)")
 
+    smap_parser = subparsers.add_parser("share-map",
+                                        help="NUTS-3 choropleth of employment share change")
+    smap_parser.add_argument("--countries", type=str, default="PT,ES,FR,IT,NL",
+                             help="Comma-separated country codes")
+    smap_parser.add_argument("--year", type=int, default=2023,
+                             help="End year (default: 2023)")
+    smap_parser.add_argument("--compare-year", type=int, default=2000,
+                             help="Start year (default: 2000)")
+    smap_parser.add_argument("--min-regions", type=int, default=5,
+                             help="Minimum regions per country")
+    smap_parser.add_argument("--map-cmap", type=str, default="#2166ac,#ffffff,#b2182b",
+                             help="Colormap (comma-separated hex)")
+    smap_parser.add_argument("--map-gamma", type=float, default=0.4,
+                             help="Gamma for symmetric norm (default: 0.4)")
+
     list_parser = subparsers.add_parser("list-regions",
                                         help="List all NUTS-3 regions for a country")
     list_parser.add_argument("country", type=str, help="2-letter EU country code")
@@ -1219,6 +1328,25 @@ def main():
                   f"  {last:>5.1f}%  {delta5:>+6.2f}pp  {shape}")
 
         plot_top_regions(df)
+        return
+
+    if args.mode == 'share-map':
+        countries = [c.strip().upper() for c in args.countries.split(',')]
+        df = share_delta_analysis(countries, year=args.year,
+                                  compare_year=args.compare_year,
+                                  min_regions=args.min_regions)
+        if df.empty:
+            print("[-] No data", file=sys.stderr)
+            sys.exit(1)
+        plot_share_delta_maps(df, countries, year=args.year,
+                              compare_year=args.compare_year,
+                              cmap_spec=args.map_cmap,
+                              gamma=args.map_gamma)
+
+        out_dir = Path(tempfile.gettempdir()) / "concentration"
+        csv_path = out_dir / f"concentration_share_delta_{args.compare_year}_{args.year}.csv"
+        df.to_csv(csv_path, index=False, float_format='%.4f')
+        print(f"[+] CSV exported to: {csv_path}")
         return
 
     if args.mode == 'eu':
