@@ -137,6 +137,9 @@ import requests
 INPUT_DIR: Path | None = None   # set by --local-data / --save-data
 SAVE_MODE: bool = False         # True when --save-data is active
 _BG_COLOR: str | None = None    # set by --bg-color
+_BAR_COLOR: str | None = None   # set by --bar-color
+_MAP_CMAP: str | None = None    # set by --map-cmap
+_MAP_GAMMA: float | None = None # set by --map-gamma
 
 
 def _apply_bg():
@@ -1566,7 +1569,7 @@ def plot_weighted_effort_bar(country_efforts: list[tuple[str, float]],
     country_efforts = sorted(country_efforts, key=lambda x: x[1])
     countries = [cc for cc, _ in country_efforts]
     efforts = [e for _, e in country_efforts]
-    bar_color = COUNTRY_COLORS['IT']
+    bar_color = _BAR_COLOR or COUNTRY_COLORS['IT']
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
@@ -1604,7 +1607,7 @@ def plot_unaffordable_bar(country_stats: list[tuple[str, float, int, int]],
     pcts = [p for _, p, _, _ in country_stats]
     n_over = [n for _, _, n, _ in country_stats]
     totals = [t for _, _, _, t in country_stats]
-    bar_color = COUNTRY_COLORS['IT']
+    bar_color = _BAR_COLOR or COUNTRY_COLORS['IT']
 
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
@@ -1972,19 +1975,29 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         ax.set_xlim(bbox[0], bbox[2])
         ax.set_ylim(bbox[1], bbox[3])
 
-    from matplotlib.colors import Normalize
-    norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
+    from matplotlib.colors import Normalize, PowerNorm
+    if _MAP_GAMMA is not None:
+        norm = PowerNorm(gamma=_MAP_GAMMA, vmin=vmin, vmax=vmax, clip=True)
+    else:
+        norm = Normalize(vmin=vmin, vmax=vmax, clip=True)
 
     no_data = merged[merged[y_col].isna()]
     if not no_data.empty:
         no_data.plot(ax=ax, color='#e0e0e0', edgecolor='white', linewidth=0.5)
 
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap_spec = _MAP_CMAP or 'YlOrRd'
+    if ',' in str(cmap_spec):
+        hex_colors = [c.strip() for c in cmap_spec.split(',')]
+        cmap = LinearSegmentedColormap.from_list('custom', hex_colors, N=256)
+    else:
+        cmap = cmap_spec
     has_data = merged[merged[y_col].notna()]
     if not has_data.empty:
-        has_data.plot(ax=ax, column=y_col, cmap='YlOrRd', norm=norm,
+        has_data.plot(ax=ax, column=y_col, cmap=cmap, norm=norm,
                       edgecolor='white', linewidth=0.5, legend=False)
 
-    sm = plt.cm.ScalarMappable(cmap='YlOrRd', norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cax = fig.add_axes([0.92, 0.25, 0.015, 0.5])
     cbar = fig.colorbar(sm, cax=cax)
@@ -2053,6 +2066,12 @@ def main():
                              '(mainland only). Colour scale calibrated to PT+ES range.')
     parser.add_argument('--bg-color', type=str, default=None,
                         help='Background color for all plots (e.g. "#f5f0e8")')
+    parser.add_argument('--bar-color', type=str, default=None,
+                        help='Override bar color for bar charts (e.g. "#9b2335")')
+    parser.add_argument('--map-cmap', type=str, default=None,
+                        help='Override colormap for choropleth maps (e.g. "RdYlBu_r", "coolwarm")')
+    parser.add_argument('--map-gamma', type=float, default=None,
+                        help='Gamma for non-linear map color scale (<1 pushes mid values toward red)')
     args = parser.parse_args()
 
     if args.fit_multivar:
@@ -2077,6 +2096,18 @@ def main():
         global _BG_COLOR
         _BG_COLOR = args.bg_color
         _apply_bg()
+
+    if args.bar_color:
+        global _BAR_COLOR
+        _BAR_COLOR = args.bar_color
+
+    if args.map_cmap:
+        global _MAP_CMAP
+        _MAP_CMAP = args.map_cmap
+
+    if args.map_gamma is not None:
+        global _MAP_GAMMA
+        _MAP_GAMMA = args.map_gamma
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers

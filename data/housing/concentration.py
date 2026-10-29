@@ -28,6 +28,8 @@ import requests
 INPUT_DIR: Path | None = None
 SAVE_MODE: bool = False
 _BG_COLOR: str | None = None
+_BAR_COLOR: str | None = None
+_BAR_COLOR_NEG: str | None = None
 
 
 def _apply_bg():
@@ -712,6 +714,7 @@ def _plot_eu_bar(df, target_pct, year, out_dir, *, val_col, cmp_col,
                  compare_year=None):
     """Bar chart of a per-country metric sorted descending, with optional comparison markers."""
     has_cmp = compare_year and cmp_col in df.columns
+    color = _BAR_COLOR or color
     sub = df.sort_values(val_col, ascending=False).reset_index(drop=True)
     fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
     ax.bar(range(len(sub)), sub[val_col], color=color,
@@ -935,7 +938,9 @@ def plot_top_regions(df: pd.DataFrame):
     sdf = pd.DataFrame(summary).sort_values('delta', ascending=True)
 
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
-    colors = ['#c62828' if d > 0 else '#2e7d32' for d in sdf['delta']]
+    pos_color = _BAR_COLOR or '#c62828'
+    neg_color = _BAR_COLOR_NEG or '#2e7d32'
+    colors = [pos_color if d > 0 else neg_color for d in sdf['delta']]
     bars = ax.barh(range(len(sdf)), sdf['delta'], color=colors, edgecolor='white', linewidth=0.5)
     ax.set_yticks(range(len(sdf)))
     labels = [f"{r['country']} — {r['region_name'][:25]}" for _, r in sdf.iterrows()]
@@ -1099,6 +1104,10 @@ def main():
     )
     parser.add_argument('--bg-color', type=str, default=None,
                         help='Background color for all plots (e.g. "#f5f0e8")')
+    parser.add_argument('--bar-color', type=str, default=None,
+                        help='Override bar color for bar charts (e.g. "#9b2335")')
+    parser.add_argument('--bar-color-neg', type=str, default=None,
+                        help='Override color for negative bars in delta charts (e.g. "#5B9BD5")')
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     cr_parser = subparsers.add_parser("cr", help="Concentration ratio of top n regions")
@@ -1145,6 +1154,13 @@ def main():
         global _BG_COLOR
         _BG_COLOR = args.bg_color
         _apply_bg()
+
+    if args.bar_color:
+        global _BAR_COLOR
+        _BAR_COLOR = args.bar_color
+    if args.bar_color_neg:
+        global _BAR_COLOR_NEG
+        _BAR_COLOR_NEG = args.bar_color_neg
 
     if args.mode == 'list-regions':
         raw_df = fetch_eurostat_data(args.country)
