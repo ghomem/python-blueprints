@@ -830,12 +830,14 @@ def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]
     return result
 
 
-def top_region_analysis(min_regions: int = 5) -> pd.DataFrame:
+def top_region_analysis(min_regions: int = 5, max_year: int | None = None) -> pd.DataFrame:
     """For each EU-27 country, find the top employment region and build a full time series."""
     print("[+] Fetching EU-wide employment data...", flush=True)
     emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
                                   wstatus="EMP", nace_r2="TOTAL")
     all_years_data = _extract_all_nuts3_all_years(emp_raw)
+    if max_year is not None:
+        all_years_data = {yr: v for yr, v in all_years_data.items() if yr <= max_year}
     years = sorted(all_years_data.keys())
 
     rows = []
@@ -1146,6 +1148,8 @@ def main():
                                        help="Top-region share trajectories for all EU-27")
     cap_parser.add_argument("--min-regions", type=int, default=0,
                             help="Exclude countries with fewer NUTS-3 regions (default: 0)")
+    cap_parser.add_argument("--year", type=int, default=None,
+                            help="Cap time series at this year (default: use all available)")
 
     list_parser = subparsers.add_parser("list-regions",
                                         help="List all NUTS-3 regions for a country")
@@ -1180,7 +1184,8 @@ def main():
         return
 
     if args.mode == 'top':
-        df = top_region_analysis(min_regions=args.min_regions)
+        df = top_region_analysis(min_regions=args.min_regions,
+                                  max_year=args.year)
         if df.empty:
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
