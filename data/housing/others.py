@@ -157,10 +157,6 @@ def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
     ax.set_ylim(0, min(100, max(pcts) * 1.15))
     ax.tick_params(axis='x', labelsize=12)
 
-    ax.text(0.98, 0.97, 'Source: Eurostat HBS (hbs_str_t211), COICOP CP04',
-            transform=ax.transAxes, fontsize=8, ha='right', va='top',
-            bbox=dict(boxstyle='round,pad=0.3', fc=_BG_COLOR or '#f5f0e8', ec='#999'))
-
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
     plt.close(fig)
