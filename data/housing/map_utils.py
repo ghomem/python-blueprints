@@ -173,7 +173,7 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
         pos_hi = float(norm(norm.vmax))
         gradient = np.linspace(pos_lo, pos_hi, 256).reshape(-1, 1)
         cax.imshow(gradient, aspect='auto', cmap=cmap_obj, origin='lower',
-                   extent=[0, 1, pos_lo, pos_hi])
+                   extent=[0, 1, pos_lo, pos_hi], vmin=0, vmax=1)
         cax.set_xlim(0, 1)
         cax.set_ylim(pos_lo, pos_hi)
         cax.xaxis.set_visible(False)

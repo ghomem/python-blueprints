@@ -1917,8 +1917,8 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
 # ---------------------------------------------------------------------------
 
 
-_DENSITY_VMIN = 29    # Soria — full blue reference
-_DENSITY_VCENTER = 100
+_DENSITY_VMIN = 4     # Teruel (ES242) — full blue reference
+_DENSITY_VCENTER = 53
 _DENSITY_VMAX = 1011  # Grande Lisboa — full red reference
 
 
