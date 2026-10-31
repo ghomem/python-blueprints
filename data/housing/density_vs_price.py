@@ -2011,6 +2011,7 @@ def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
         gamma=_MAP_GAMMA,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
+        label_regions=not _NO_MAP_LABELS,
         label_fontsize=4,
         text_color_fn=_effort_text_color,
     )
@@ -2041,6 +2042,7 @@ def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
         gamma=_MAP_GAMMA or 0.4,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
+        label_regions=not _NO_MAP_LABELS,
         label_fontsize=4,
     )
 
