@@ -141,6 +141,7 @@ _BAR_COLOR: str | None = None   # set by --bar-color
 _MAP_CMAP: str | None = None    # set by --map-cmap
 _MAP_GAMMA: float | None = None # set by --map-gamma
 _MAP_VCENTER: float | None = None # set by --map-vcenter
+_NO_MAP_LABELS: bool = False      # set by --no-map-labels
 
 
 def _apply_bg():
@@ -1945,6 +1946,7 @@ def plot_density_map(df: pd.DataFrame, country: str, year: int,
         gamma=_MAP_GAMMA or 0.4,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
+        label_regions=not _NO_MAP_LABELS,
         label_fontsize_override={'FR': 5, 'ES': 5},
     )
 
@@ -1975,6 +1977,7 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         gamma=_MAP_GAMMA,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
+        label_regions=not _NO_MAP_LABELS,
         label_fontsize_override={'FR': 5, 'ES': 5},
         text_color_fn=_effort_text_color,
     )
@@ -2030,6 +2033,9 @@ def main():
                         help='Gamma for non-linear map color scale (<1 punches both extremes)')
     parser.add_argument('--map-vcenter', type=float, default=None,
                         help='Effort value that maps to white/midpoint of color scale')
+    parser.add_argument('--no-map-labels', action='store_true',
+                        help='Hide region text labels from choropleth maps '
+                             '(effort and density). Keeps colorbar, title, and axes.')
     args = parser.parse_args()
 
     if args.fit_multivar:
@@ -2070,6 +2076,10 @@ def main():
     if args.map_vcenter is not None:
         global _MAP_VCENTER
         _MAP_VCENTER = args.map_vcenter
+
+    if args.no_map_labels:
+        global _NO_MAP_LABELS
+        _NO_MAP_LABELS = True
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers
