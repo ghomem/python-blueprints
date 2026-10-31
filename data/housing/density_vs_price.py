@@ -2183,7 +2183,8 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
 
 def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
                     output_file: str, metric: str = 'effort',
-                    vmin: float = None, vmax: float = None):
+                    vmin: float = None, vmax: float = None,
+                    brand: str | None = None):
     """Choropleth map combining multiple countries on one figure."""
     from map_utils import fetch_nuts3_geometry, plot_joined_choropleth
 
@@ -2212,12 +2213,14 @@ def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
         label_regions=not _NO_MAP_LABELS,
         label_fontsize=4,
         text_color_fn=_effort_text_color,
+        brand=brand,
     )
 
 
 def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
                             year: int, output_file: str,
-                            vmin: float = None, vmax: float = None):
+                            vmin: float = None, vmax: float = None,
+                            brand: str | None = None):
     """Density choropleth map combining multiple countries on one figure."""
     from map_utils import fetch_nuts3_geometry, plot_joined_choropleth
 
@@ -2242,6 +2245,7 @@ def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
         bg_color=_BG_COLOR,
         label_regions=not _NO_MAP_LABELS,
         label_fontsize=4,
+        brand=brand,
     )
 
 
@@ -2289,6 +2293,9 @@ def main():
                         help='Produce one additional combined map showing all '
                              '--countries together (requires --map and/or '
                              '--map-density). Ultra-peripheral regions excluded.')
+    parser.add_argument('--brand-joined-map', action='store_true',
+                        help='Add "The housing market is NUTS · https://nuts.logical.li" '
+                             'branding to joined maps. Requires --join-maps.')
     parser.add_argument('--bg-color', type=str, default=None,
                         help='Background color for all plots (e.g. "#f5f0e8")')
     parser.add_argument('--bar-color', type=str, default=None,
@@ -2307,6 +2314,9 @@ def main():
                              'fits per country: density-only and (if --tourism) tourism-only, '
                              'with and without outliers.')
     args = parser.parse_args()
+
+    if args.brand_joined_map and not args.join_maps:
+        parser.error("--brand-joined-map requires --join-maps")
 
     if args.fit_multivar:
         args.tourism = True
@@ -2526,8 +2536,9 @@ def main():
             joined_dfs = [(cc, df) for cc, df, _ in country_data]
             tag = '_'.join(cc for cc, _, _ in country_data)
             joined_out = str(out_dir / f"dvp_{tag}_effort_map_{year}.png")
+            brand = 'The housing market is NUTS · https://nuts.logical.li' if args.brand_joined_map else None
             plot_joined_map(joined_dfs, year, joined_out, metric='effort',
-                            vmin=vmin, vmax=vmax)
+                            vmin=vmin, vmax=vmax, brand=brand)
 
     if args.map_density and country_data:
         for country, df, use_year in country_data:
@@ -2537,7 +2548,8 @@ def main():
             joined_dfs = [(cc, df) for cc, df, _ in country_data]
             tag = '_'.join(cc for cc, _, _ in country_data)
             joined_out = str(out_dir / f"dvp_{tag}_density_map_{year}.png")
-            plot_joined_density_map(joined_dfs, year, joined_out)
+            brand = 'The housing market is NUTS · https://nuts.logical.li' if args.brand_joined_map else None
+            plot_joined_density_map(joined_dfs, year, joined_out, brand=brand)
 
     if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")

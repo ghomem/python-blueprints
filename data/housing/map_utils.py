@@ -255,6 +255,7 @@ def plot_joined_choropleth(gdf, data_dfs: list[tuple[str, 'pd.DataFrame']],
                            label_regions: bool = True,
                            label_fontsize: int = 4,
                            text_color_fn=None,
+                           brand: str | None = None,
                            figsize: tuple = (14, 12)):
     """Render a NUTS-3 choropleth map for multiple countries on one figure.
 
@@ -410,6 +411,11 @@ def plot_joined_choropleth(gdf, data_dfs: list[tuple[str, 'pd.DataFrame']],
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_axis_off()
     ax.set_aspect('equal')
+
+    if brand:
+        ax.text(0.5, 0.015, brand, transform=ax.transAxes, fontsize=8,
+                color='#666666', fontstyle='italic', ha='center', va='top',
+                fontfamily='sans-serif')
 
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close(fig)
