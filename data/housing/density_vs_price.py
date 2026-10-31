@@ -2094,7 +2094,17 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
     _lc = _BG_COLOR or '#f5f0e8'
-    ax.legend(fontsize=11, loc='upper right', facecolor=_lc, edgecolor=_lc)
+    if tourism:
+        from matplotlib.lines import Line2D
+        handles = [Line2D([0], [0], marker='o', color='none',
+                          markerfacecolor=COUNTRY_COLORS.get(cc.upper(), '#333'),
+                          markeredgecolor=COUNTRY_COLORS.get(cc.upper(), '#333'),
+                          markersize=8, label=cc.upper())
+                   for cc, _ in datasets]
+        ax.legend(handles=handles, fontsize=11, loc='upper right',
+                  facecolor=_lc, edgecolor=_lc)
+    else:
+        ax.legend(fontsize=11, loc='upper right', facecolor=_lc, edgecolor=_lc)
 
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
