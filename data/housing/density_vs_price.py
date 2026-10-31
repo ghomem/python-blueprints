@@ -1983,6 +1983,68 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
     )
 
 
+def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
+                    output_file: str, metric: str = 'effort',
+                    vmin: float = None, vmax: float = None):
+    """Choropleth map combining multiple countries on one figure."""
+    from map_utils import fetch_nuts3_geometry, plot_joined_choropleth
+
+    mc = METRIC_CONFIG[metric]
+    gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+
+    tag = '+'.join(cc for cc, _ in data_dfs)
+
+    def _effort_text_color(val):
+        return 'white' if val >= 1.75 else '#333333'
+
+    plot_joined_choropleth(
+        gdf=gdf,
+        data_dfs=data_dfs,
+        value_col=mc['y_col'],
+        merge_left='NUTS_ID',
+        merge_right='nuts3',
+        title=f'{mc["title"]} — {tag} NUTS-3 ({year})',
+        colorbar_label=mc['ylabel'],
+        output_file=output_file,
+        vmin=vmin, vmax=vmax,
+        vcenter=_MAP_VCENTER,
+        gamma=_MAP_GAMMA,
+        cmap_spec=_MAP_CMAP or 'YlOrRd',
+        bg_color=_BG_COLOR,
+        label_fontsize=4,
+        text_color_fn=_effort_text_color,
+    )
+
+
+def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
+                            year: int, output_file: str,
+                            vmin: float = None, vmax: float = None):
+    """Density choropleth map combining multiple countries on one figure."""
+    from map_utils import fetch_nuts3_geometry, plot_joined_choropleth
+
+    gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+
+    tag = '+'.join(cc for cc, _ in data_dfs)
+
+    plot_joined_choropleth(
+        gdf=gdf,
+        data_dfs=data_dfs,
+        value_col='jobs_per_km2',
+        merge_left='NUTS_ID',
+        merge_right='nuts3',
+        title=f'Employment density — {tag} NUTS-3 ({year})',
+        colorbar_label='Jobs / km²',
+        output_file=output_file,
+        vmin=vmin or _DENSITY_VMIN,
+        vmax=vmax or _DENSITY_VMAX,
+        vcenter=_DENSITY_VCENTER,
+        gamma=_MAP_GAMMA or 0.4,
+        cmap_spec=_MAP_CMAP or 'YlOrRd',
+        bg_color=_BG_COLOR,
+        label_fontsize=4,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Employment Density vs Housing metrics — NUTS-3 scatter plot')
@@ -2023,6 +2085,10 @@ def main():
     parser.add_argument('--map-density', action='store_true',
                         help='Choropleth map of employment density (jobs/km²) by '
                              'NUTS-3 region (mainland only). Uses log scale.')
+    parser.add_argument('--join-maps', action='store_true',
+                        help='Produce one additional combined map showing all '
+                             '--countries together (requires --map and/or '
+                             '--map-density). Ultra-peripheral regions excluded.')
     parser.add_argument('--bg-color', type=str, default=None,
                         help='Background color for all plots (e.g. "#f5f0e8")')
     parser.add_argument('--bar-color', type=str, default=None,
@@ -2252,11 +2318,20 @@ def main():
             map_out = str(out_dir / f"dvp_{country}_effort_map_{use_year}.png")
             plot_map(df, country, use_year, map_out, metric='effort',
                      vmin=vmin, vmax=vmax)
+        if args.join_maps and len(country_data) > 1:
+            joined_dfs = [(cc, df) for cc, df, _ in country_data]
+            joined_out = str(out_dir / f"dvp_joined_effort_map_{year}.png")
+            plot_joined_map(joined_dfs, year, joined_out, metric='effort',
+                            vmin=vmin, vmax=vmax)
 
     if args.map_density and country_data:
         for country, df, use_year in country_data:
             map_out = str(out_dir / f"dvp_{country}_density_map_{use_year}.png")
             plot_density_map(df, country, use_year, map_out)
+        if args.join_maps and len(country_data) > 1:
+            joined_dfs = [(cc, df) for cc, df, _ in country_data]
+            joined_out = str(out_dir / f"dvp_joined_density_map_{year}.png")
+            plot_joined_density_map(joined_dfs, year, joined_out)
 
     if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")
