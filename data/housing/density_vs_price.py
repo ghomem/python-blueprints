@@ -2524,7 +2524,8 @@ def main():
                      vmin=vmin, vmax=vmax)
         if args.join_maps and len(country_data) > 1:
             joined_dfs = [(cc, df) for cc, df, _ in country_data]
-            joined_out = str(out_dir / f"dvp_joined_effort_map_{year}.png")
+            tag = '_'.join(cc for cc, _, _ in country_data)
+            joined_out = str(out_dir / f"dvp_{tag}_effort_map_{year}.png")
             plot_joined_map(joined_dfs, year, joined_out, metric='effort',
                             vmin=vmin, vmax=vmax)
 
@@ -2534,7 +2535,8 @@ def main():
             plot_density_map(df, country, use_year, map_out)
         if args.join_maps and len(country_data) > 1:
             joined_dfs = [(cc, df) for cc, df, _ in country_data]
-            joined_out = str(out_dir / f"dvp_joined_density_map_{year}.png")
+            tag = '_'.join(cc for cc, _, _ in country_data)
+            joined_out = str(out_dir / f"dvp_{tag}_density_map_{year}.png")
             plot_joined_density_map(joined_dfs, year, joined_out)
 
     if args.fit_multivar and country_data:
