@@ -1538,7 +1538,7 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
         for j in range(len(col_labels)):
             table[i + 1, j].set_facecolor(cell_color)
 
-    title = (f"Purchase Effort — Two-Variable Fit ({year})\n"
+    title = (f"Purchase Effort · Two-Variable Fit ({year})\n"
              f"effort = a · ln(job density) + b · tourism nights/worker + c")
     ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
 
@@ -1704,9 +1704,9 @@ def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
         for j in range(n_cols):
             table[i + 1, j].set_facecolor(cell_color)
 
-    subtitle = "ln(density) → effort"
+    subtitle = "ln(density) vs effort"
     if has_tourism:
-        subtitle += "  |  tourism nights/worker → effort"
+        subtitle += "  |  tourism nights/worker vs effort"
     title = (f"Single-Variable Fit Evidence ({year})\n{subtitle}")
     ax.set_title(title, fontsize=15, fontweight='bold', pad=10)
 
@@ -1980,7 +1980,7 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
     ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs {mc["title"]} — {cc} NUTS-3 ({year})',
+    ax.set_title(f'Employment Density vs {mc["title"]} · {cc} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
 
     fig.tight_layout()
@@ -2091,7 +2091,7 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     ax.set_xlabel('Employment Density (jobs / km²' + (', log scale)' if log_x else ')'),
                   fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs {mc["title"]} — {countries_label} NUTS-3 ({year})',
+    ax.set_title(f'Employment Density vs {mc["title"]} · {countries_label} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold', pad=15)
     _lc = _BG_COLOR or '#f5f0e8'
     if tourism:
@@ -2180,7 +2180,7 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
     ax.set_xlabel('Tourist nights / worker / year', fontsize=12)
     ax.set_ylabel(mc['ylabel'], fontsize=12)
     tag = '_'.join(cc for cc, _ in datasets)
-    ax.set_title(f'Tourism Intensity vs {mc["title"]} — {tag} NUTS-3 ({year})',
+    ax.set_title(f'Tourism Intensity vs {mc["title"]} · {tag} NUTS-3 ({year})',
                  fontsize=14, fontweight='bold')
     _lc = _BG_COLOR or '#f5f0e8'
     ax.legend(fontsize=10, facecolor=_lc, edgecolor=_lc)
@@ -2216,7 +2216,7 @@ def plot_density_map(df: pd.DataFrame, country: str, year: int,
         value_col='jobs_per_km2',
         merge_left='NUTS_ID',
         merge_right='nuts3',
-        title=f'Employment density — {country.upper()} NUTS-3 ({year})',
+        title=f'Employment density · {country.upper()} NUTS-3 ({year})',
         colorbar_label='Jobs / km²',
         output_file=output_file,
         vmin=vmin or _DENSITY_VMIN,
@@ -2250,7 +2250,7 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         value_col=mc['y_col'],
         merge_left='NUTS_ID',
         merge_right='nuts3',
-        title=f'{mc["title"]} — {country.upper()} NUTS-3 ({year})',
+        title=f'{mc["title"]} · {country.upper()} NUTS-3 ({year})',
         colorbar_label=mc['ylabel'],
         output_file=output_file,
         vmin=vmin, vmax=vmax,
@@ -2287,7 +2287,7 @@ def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
         value_col=mc['y_col'],
         merge_left='NUTS_ID',
         merge_right='nuts3',
-        title=f'{mc["title"]} — {tag} NUTS-3 ({year})',
+        title=f'{mc["title"]} · {tag} NUTS-3 ({year})',
         colorbar_label=mc['ylabel'],
         output_file=output_file,
         vmin=vmin, vmax=vmax,
@@ -2321,7 +2321,7 @@ def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
         value_col='jobs_per_km2',
         merge_left='NUTS_ID',
         merge_right='nuts3',
-        title=f'Employment density — {tag} NUTS-3 ({year})',
+        title=f'Employment density · {tag} NUTS-3 ({year})',
         colorbar_label='Jobs / km²',
         output_file=output_file,
         vmin=vmin or _DENSITY_VMIN,

@@ -1139,7 +1139,7 @@ def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
     ax2.set_ylabel(f'Share of {cc} total employment (%)', fontsize=11, labelpad=10, color=color2)
     ax2.tick_params(axis='y', labelcolor=color2)
 
-    ax1.set_title(f'Employment — {region_name} ({nuts3})',
+    ax1.set_title(f'Employment · {region_name} ({nuts3})',
                   fontsize=14, fontweight='bold', pad=15)
 
     lines1, labels1 = ax1.get_legend_handles_labels()
@@ -1212,7 +1212,7 @@ def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: flo
     else:
         pct = target_val
         ax.plot(df['year'], df['metric_val'], marker='s', linewidth=2.5, color='#d95f02', label=f'Regions needed for {pct}% Share')
-        ax.set_title(f'Number of Regions ($n$) Required to Reach {pct}% National Employment — {cc}', fontsize=14, fontweight='bold', pad=15)
+        ax.set_title(f'Number of Regions ($n$) Required to Reach {pct}% National Employment · {cc}', fontsize=14, fontweight='bold', pad=15)
         ax.set_ylabel('Number of Top NUTS-3 Regions ($n$)', fontsize=11, labelpad=10)
 
         ax.yaxis.get_major_locator().set_params(integer=True)
