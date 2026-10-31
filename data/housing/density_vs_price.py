@@ -1479,6 +1479,204 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
     print(f"[+] Fit summary table saved to: {png_path}")
 
 
+def _single_var_r2(x: np.ndarray, y: np.ndarray, log_x: bool = True):
+    """Compute R² for a single-variable OLS fit.
+
+    If log_x is True, fits y = a*ln(x) + b (log-linear).
+    If log_x is False, fits y = a*x + b (linear).
+    Returns (r2, n) or None if too few valid points.
+    """
+    if log_x:
+        valid = (x > 0) & np.isfinite(x) & np.isfinite(y)
+    else:
+        valid = np.isfinite(x) & np.isfinite(y)
+    n = int(valid.sum())
+    if n <= 2:
+        return None
+    xv = np.log(x[valid]) if log_x else x[valid]
+    yv = y[valid]
+    coeffs = np.polyfit(xv, yv, 1)
+    predicted = coeffs[0] * xv + coeffs[1]
+    ss_res = np.sum((yv - predicted) ** 2)
+    ss_tot = np.sum((yv - yv.mean()) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else float('nan')
+    return r2, n
+
+
+def compute_extra_fit_evidence(country_data: list, year: int,
+                               has_tourism: bool) -> list[dict]:
+    """Compute single-variable R² fits per country for the evidence table.
+
+    Returns a list of dicts, one per country, with keys:
+      cc, density_r2_all, density_n_all,
+      density_r2_clean, density_n_clean, density_n_excluded,
+      tourism_r2_all, tourism_n_all,
+      tourism_r2_clean, tourism_n_clean, tourism_n_excluded
+    Tourism keys are present only when has_tourism is True.
+    """
+    results = []
+    for cc, df, _ in country_data:
+        row = {'cc': cc}
+
+        x_dens = df['jobs_per_km2'].values
+        y_eff = df['effort_months_per_m2'].values
+
+        # --- Density only, all regions ---
+        fit_all = _single_var_r2(x_dens, y_eff, log_x=True)
+        if fit_all is not None:
+            row['density_r2_all'] = fit_all[0]
+            row['density_n_all'] = fit_all[1]
+        else:
+            row['density_r2_all'] = None
+            row['density_n_all'] = 0
+
+        # --- Density only, outliers excluded ---
+        outlier_mask = _detect_outliers(x_dens, y_eff)
+        n_excluded = int(outlier_mask.sum())
+        x_clean = x_dens[~outlier_mask]
+        y_clean = y_eff[~outlier_mask]
+        fit_clean = _single_var_r2(x_clean, y_clean, log_x=True)
+        if fit_clean is not None:
+            row['density_r2_clean'] = fit_clean[0]
+            row['density_n_clean'] = fit_clean[1]
+        else:
+            row['density_r2_clean'] = None
+            row['density_n_clean'] = 0
+        row['density_n_excluded'] = n_excluded
+
+        # --- Tourism fits (only when --tourism is active) ---
+        if has_tourism and 'nights_per_worker' in df.columns:
+            sub = df.dropna(subset=['nights_per_worker', 'effort_months_per_m2'])
+            x_tour = sub['nights_per_worker'].values
+            y_tour = sub['effort_months_per_m2'].values
+
+            # Tourism, all regions
+            fit_t_all = _single_var_r2(x_tour, y_tour, log_x=False)
+            if fit_t_all is not None:
+                row['tourism_r2_all'] = fit_t_all[0]
+                row['tourism_n_all'] = fit_t_all[1]
+            else:
+                row['tourism_r2_all'] = None
+                row['tourism_n_all'] = 0
+
+            # Tourism, outliers excluded (outlier detection on density-vs-effort axes)
+            x_dens_sub = sub['jobs_per_km2'].values
+            y_eff_sub = sub['effort_months_per_m2'].values
+            out_sub = _detect_outliers(x_dens_sub, y_eff_sub)
+            n_excl_t = int(out_sub.sum())
+            x_tour_clean = x_tour[~out_sub]
+            y_tour_clean = y_tour[~out_sub]
+            fit_t_clean = _single_var_r2(x_tour_clean, y_tour_clean, log_x=False)
+            if fit_t_clean is not None:
+                row['tourism_r2_clean'] = fit_t_clean[0]
+                row['tourism_n_clean'] = fit_t_clean[1]
+            else:
+                row['tourism_r2_clean'] = None
+                row['tourism_n_clean'] = 0
+            row['tourism_n_excluded'] = n_excl_t
+
+        results.append(row)
+    return results
+
+
+def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
+                             has_tourism: bool):
+    """Render the extra-fit-evidence table as a PNG, matching _plot_fit_summary style."""
+    n_rows = len(evidence)
+
+    # Build column labels and cell data
+    col_labels = ['Country',
+                  'R²\n(density, all)', 'n',
+                  'R²\n(density, clean)', 'n', 'excl']
+    if has_tourism:
+        col_labels += ['R²\n(tourism, all)', 'n',
+                       'R²\n(tourism, clean)', 'n', 'excl']
+
+    rows = []
+    for e in evidence:
+        r = [e['cc']]
+        # Density all
+        r.append(f"{e['density_r2_all']:.3f}" if e['density_r2_all'] is not None else '—')
+        r.append(str(e['density_n_all']))
+        # Density clean
+        r.append(f"{e['density_r2_clean']:.3f}" if e['density_r2_clean'] is not None else '—')
+        r.append(str(e['density_n_clean']))
+        r.append(str(e['density_n_excluded']))
+        if has_tourism:
+            r.append(f"{e.get('tourism_r2_all'):.3f}" if e.get('tourism_r2_all') is not None else '—')
+            r.append(str(e.get('tourism_n_all', 0)))
+            r.append(f"{e.get('tourism_r2_clean'):.3f}" if e.get('tourism_r2_clean') is not None else '—')
+            r.append(str(e.get('tourism_n_clean', 0)))
+            r.append(str(e.get('tourism_n_excluded', 0)))
+        rows.append(r)
+
+    n_cols = len(col_labels)
+    fig_w = max(8, 1.4 * n_cols)
+    fig, ax = plt.subplots(figsize=(fig_w, 0.65 + 0.40 * n_rows), dpi=200)
+    ax.axis('off')
+
+    table = ax.table(
+        cellText=rows, colLabels=col_labels,
+        cellLoc='center', loc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.9)
+
+    header_color = '#1a2332'
+    cell_color = _BG_COLOR or '#f5f0e8'
+    for j in range(n_cols):
+        cell = table[0, j]
+        cell.set_facecolor(header_color)
+        cell.set_text_props(color='white', fontweight='bold', fontsize=9)
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+            table[i + 1, j].set_facecolor(cell_color)
+
+    subtitle = "ln(density) → effort"
+    if has_tourism:
+        subtitle += "  |  tourism nights/worker → effort"
+    title = (f"Single-Variable Fit Evidence ({year})\n{subtitle}")
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
+
+    png_path = out_dir / f"dvp_extra_fit_evidence_{year}.png"
+    fig.savefig(png_path, bbox_inches='tight', pad_inches=0.15)
+    plt.close(fig)
+    print(f"[+] Extra fit evidence table saved to: {png_path}")
+
+
+def _save_extra_fit_evidence_csv(evidence: list[dict], year: int, out_dir: Path,
+                                 has_tourism: bool):
+    """Save the extra-fit-evidence table as CSV."""
+    headers = ['country',
+               'density_r2_all', 'density_n_all',
+               'density_r2_clean', 'density_n_clean', 'density_n_excluded']
+    if has_tourism:
+        headers += ['tourism_r2_all', 'tourism_n_all',
+                    'tourism_r2_clean', 'tourism_n_clean', 'tourism_n_excluded']
+
+    csv_path = out_dir / f"dvp_extra_fit_evidence_{year}.csv"
+    with open(csv_path, 'w', newline='') as f:
+        writer = csvmod.writer(f)
+        writer.writerow(headers)
+        for e in evidence:
+            row = [e['cc']]
+            row.append(f"{e['density_r2_all']:.4f}" if e['density_r2_all'] is not None else '')
+            row.append(e['density_n_all'])
+            row.append(f"{e['density_r2_clean']:.4f}" if e['density_r2_clean'] is not None else '')
+            row.append(e['density_n_clean'])
+            row.append(e['density_n_excluded'])
+            if has_tourism:
+                row.append(f"{e.get('tourism_r2_all'):.4f}" if e.get('tourism_r2_all') is not None else '')
+                row.append(e.get('tourism_n_all', 0))
+                row.append(f"{e.get('tourism_r2_clean'):.4f}" if e.get('tourism_r2_clean') is not None else '')
+                row.append(e.get('tourism_n_clean', 0))
+                row.append(e.get('tourism_n_excluded', 0))
+            writer.writerow(row)
+    print(f"[+] Extra fit evidence CSV saved to: {csv_path}")
+
+
 def _detect_outliers(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """IQR on log-linear residuals: True for outlier points."""
     valid = x > 0
@@ -2030,6 +2228,10 @@ def main():
                         help='Gamma for non-linear map color scale (<1 punches both extremes)')
     parser.add_argument('--map-vcenter', type=float, default=None,
                         help='Effort value that maps to white/midpoint of color scale')
+    parser.add_argument('--extra-fit-evidence', action='store_true',
+                        help='Produce a summary table (PNG+CSV) of R² for single-variable '
+                             'fits per country: density-only and (if --tourism) tourism-only, '
+                             'with and without outliers.')
     args = parser.parse_args()
 
     if args.fit_multivar:
@@ -2251,6 +2453,15 @@ def main():
     if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")
         multivar_fit_multivar(country_data, year, out_dir)
+
+    if args.extra_fit_evidence and country_data:
+        print("\n[*] Single-variable fit evidence:")
+        evidence = compute_extra_fit_evidence(
+            country_data, year, has_tourism=args.tourism)
+        _plot_extra_fit_evidence(evidence, year, out_dir,
+                                has_tourism=args.tourism)
+        _save_extra_fit_evidence_csv(evidence, year, out_dir,
+                                    has_tourism=args.tourism)
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)
