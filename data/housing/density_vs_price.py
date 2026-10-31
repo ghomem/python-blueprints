@@ -142,6 +142,13 @@ _MAP_CMAP: str | None = None    # set by --map-cmap
 _MAP_GAMMA: float | None = None # set by --map-gamma
 _MAP_VCENTER: float | None = None # set by --map-vcenter
 _NO_MAP_LABELS: bool = False      # set by --no-map-labels
+_MERGE_PARIS: bool = False        # set by --merge-paris
+
+# Paris "Petite Couronne" merge — the four NUTS-3 regions that form
+# the contiguous urban core (Paris + 3 inner-ring départements).
+PARIS_MERGE_CODES = frozenset({'FR101', 'FR105', 'FR106', 'FR107'})
+PARIS_MERGED_CODE = 'FR1PC'
+PARIS_MERGED_NAME = 'Paris + Petite Couronne'
 
 
 def _apply_bg():
@@ -1331,6 +1338,67 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
+def _merge_paris_regions(df: pd.DataFrame) -> pd.DataFrame:
+    """Merge FR101, FR105, FR106, FR107 into a single 'Paris + Petite Couronne'.
+
+    Uses employment-weighted averages for effort, price, and wage.
+    Density is recomputed as total_employment / total_area.
+    """
+    paris = df[df['nuts3'].isin(PARIS_MERGE_CODES)]
+    if paris.empty:
+        return df
+    rest = df[~df['nuts3'].isin(PARIS_MERGE_CODES)].copy()
+
+    total_emp = paris['employment_ths'].sum()
+    if total_emp == 0:
+        return df
+
+    total_area = paris['area_km2'].sum()
+    w = paris['employment_ths']  # weights
+
+    merged_row = {
+        'nuts3': PARIS_MERGED_CODE,
+        'name': PARIS_MERGED_NAME,
+        'employment_ths': total_emp,
+        'area_km2': total_area,
+        'jobs_per_km2': (total_emp * 1000) / total_area,
+        'price_eur_m2': (paris['price_eur_m2'] * w).sum() / total_emp,
+        'avg_annual_wage': (paris['avg_annual_wage'] * w).sum() / total_emp,
+        'effort_months_per_m2': (paris['effort_months_per_m2'] * w).sum() / total_emp,
+        'wage_fallback': False,
+    }
+    merged_row['monthly_wage'] = merged_row['avg_annual_wage'] / 12
+
+    if 'nuts2' in paris.columns:
+        merged_row['nuts2'] = 'FR10'
+
+    return pd.concat([rest, pd.DataFrame([merged_row])], ignore_index=True)
+
+
+def _merge_paris_geometry(gdf):
+    """Merge FR101, FR105, FR106, FR107 geometries into a single FR1PC polygon."""
+    import geopandas as gpd
+    from shapely.ops import unary_union
+
+    paris_rows = gdf[gdf['NUTS_ID'].isin(PARIS_MERGE_CODES)]
+    if paris_rows.empty:
+        return gdf
+
+    merged_geom = unary_union(paris_rows.geometry)
+
+    # Build the new row from the first Paris row, overriding key fields
+    new_row = paris_rows.iloc[0].copy()
+    new_row['NUTS_ID'] = PARIS_MERGED_CODE
+    new_row['NAME_LATN'] = PARIS_MERGED_NAME
+    new_row['geometry'] = merged_geom
+
+    rest = gdf[~gdf['NUTS_ID'].isin(PARIS_MERGE_CODES)]
+    return gpd.GeoDataFrame(
+        pd.concat([rest, pd.DataFrame([new_row])], ignore_index=True),
+        geometry='geometry', crs=gdf.crs,
+    )
+
+
 def _tourism_colors(base_hex, npw_values, norm):
     """Per-point RGB with saturation driven by tourism intensity."""
     from matplotlib.colors import rgb_to_hsv, hsv_to_rgb, to_rgb
@@ -2127,6 +2195,8 @@ def plot_density_map(df: pd.DataFrame, country: str, year: int,
     from map_utils import fetch_nuts3_geometry, plot_choropleth
 
     gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+    if _MERGE_PARIS:
+        gdf = _merge_paris_geometry(gdf)
 
     plot_choropleth(
         gdf=gdf,
@@ -2156,6 +2226,8 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
 
     mc = METRIC_CONFIG[metric]
     gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+    if _MERGE_PARIS:
+        gdf = _merge_paris_geometry(gdf)
 
     def _effort_text_color(val):
         return 'white' if val >= 1.75 else '#333333'
@@ -2190,6 +2262,8 @@ def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
 
     mc = METRIC_CONFIG[metric]
     gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+    if _MERGE_PARIS:
+        gdf = _merge_paris_geometry(gdf)
 
     tag = '+'.join(cc for cc, _ in data_dfs)
 
@@ -2225,6 +2299,8 @@ def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
     from map_utils import fetch_nuts3_geometry, plot_joined_choropleth
 
     gdf = fetch_nuts3_geometry(input_dir=INPUT_DIR, save_mode=SAVE_MODE)
+    if _MERGE_PARIS:
+        gdf = _merge_paris_geometry(gdf)
 
     tag = '+'.join(cc for cc, _ in data_dfs)
 
@@ -2270,6 +2346,10 @@ def main():
                              help='Remove outliers from the plot and fit')
     parser.add_argument('--exclude-paris', action='store_true',
                         help='Exclude Paris (FR101) from all plots and fits')
+    parser.add_argument('--merge-paris', action='store_true',
+                        help='Merge FR101, FR105, FR106, FR107 into a single '
+                             '"Paris + Petite Couronne" region (employment-weighted '
+                             'averages). Mutually exclusive with --exclude-paris.')
     parser.add_argument('--countries', metavar='CC',
                         help='Comma-separated country codes for the combined plot '
                              '(default: all). Example: --countries PT,ES')
@@ -2318,6 +2398,9 @@ def main():
     if args.brand_joined_map and not args.join_maps:
         parser.error("--brand-joined-map requires --join-maps")
 
+    if args.exclude_paris and args.merge_paris:
+        parser.error("--exclude-paris and --merge-paris are mutually exclusive")
+
     if args.fit_multivar:
         args.tourism = True
 
@@ -2361,6 +2444,10 @@ def main():
         global _NO_MAP_LABELS
         _NO_MAP_LABELS = True
 
+    if args.merge_paris:
+        global _MERGE_PARIS
+        _MERGE_PARIS = True
+
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers
                 else 'exclude' if args.exclude_outliers else None)
@@ -2399,6 +2486,14 @@ def main():
     # Fetch tourism data once if requested (before country loop)
     tourism = fetch_tourism_nights(year) if args.tourism else {}
 
+    # If merging Paris, aggregate the tourism nights for the 4 merged regions
+    if args.merge_paris and tourism:
+        total_nights = sum(tourism.get(c, 0) for c in PARIS_MERGE_CODES)
+        if total_nights > 0:
+            tourism[PARIS_MERGED_CODE] = total_nights
+        for c in PARIS_MERGE_CODES:
+            tourism.pop(c, None)
+
     # Fetch data once (shared across metrics)
     country_data = []
     for country, fetch_prices in fetchers:
@@ -2414,6 +2509,8 @@ def main():
             df = build_scatter_data(country, prices_df, use_year)
             if args.exclude_paris:
                 df = df[df['nuts3'] != 'FR101'].reset_index(drop=True)
+            if args.merge_paris and country == 'FR':
+                df = _merge_paris_regions(df)
             if tourism:
                 df = add_tourism_intensity(df, tourism)
                 matched = df['nights_per_worker'].notna().sum()
