@@ -1680,8 +1680,8 @@ def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
         rows.append(r)
 
     n_cols = len(col_labels)
-    fig_w = max(8, 1.4 * n_cols)
-    fig, ax = plt.subplots(figsize=(fig_w, 0.65 + 0.40 * n_rows), dpi=200)
+    fig_w = max(8, 1.8 * n_cols)
+    fig, ax = plt.subplots(figsize=(fig_w, 0.85 + 0.55 * n_rows), dpi=200)
     ax.axis('off')
 
     table = ax.table(
@@ -1689,15 +1689,16 @@ def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
         cellLoc='center', loc='center',
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 1.9)
+    table.set_fontsize(13)
+    table.scale(1, 2.1)
 
     header_color = '#1a2332'
     cell_color = _BG_COLOR or '#f5f0e8'
     for j in range(n_cols):
         cell = table[0, j]
         cell.set_facecolor(header_color)
-        cell.set_text_props(color='white', fontweight='bold', fontsize=9)
+        cell.set_text_props(color='white', fontweight='bold', fontsize=12)
+        cell.set_height(cell.get_height() * 1.35)
 
     for i in range(n_rows):
         for j in range(n_cols):
@@ -1707,7 +1708,7 @@ def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
     if has_tourism:
         subtitle += "  |  tourism nights/worker → effort"
     title = (f"Single-Variable Fit Evidence ({year})\n{subtitle}")
-    ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
+    ax.set_title(title, fontsize=15, fontweight='bold', pad=10)
 
     png_path = out_dir / f"dvp_extra_fit_evidence_{year}.png"
     fig.savefig(png_path, bbox_inches='tight', pad_inches=0.15)
