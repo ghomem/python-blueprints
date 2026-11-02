@@ -287,7 +287,7 @@ def calculate_n_for_percentage(df: pd.DataFrame, target_pct: float) -> pd.DataFr
             discovered_df = df_yr.head(n_required)
 
         regions_list = [
-            f"{row['region_name']} ({row['region_code']}) — {row['indiv_pct']:.2f}%"
+            f"{row['region_name']} ({row['region_code']}) · {row['indiv_pct']:.2f}%"
             for _, row in discovered_df.iterrows()
         ]
 
@@ -392,7 +392,7 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
             subtitle += f', representing {top_area / total_area * 100:.1f}% of the country area'
 
     ax1.set_title(
-        f'NUTS-3 Employment Distribution — {cc} ({latest_year})\n{subtitle}',
+        f'NUTS-3 Employment Distribution · {cc} ({latest_year})\n{subtitle}',
         fontsize=13, fontweight='bold', pad=15
     )
 
@@ -830,7 +830,22 @@ def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]
     return result
 
 
-def top_region_analysis(min_regions: int = 5, max_year: int | None = None) -> pd.DataFrame:
+def _merge_paris_in_year_data(year_regions: list[dict]) -> list[dict]:
+    """Merge FR101+FR105+FR106+FR107 into a single FR1PC entry in a year's region list."""
+    paris = [r for r in year_regions if r['region_code'] in PARIS_MERGE_CODES]
+    if len(paris) == 0:
+        return year_regions
+    rest = [r for r in year_regions if r['region_code'] not in PARIS_MERGE_CODES]
+    rest.append({
+        'region_code': PARIS_MERGED_CODE,
+        'region_name': PARIS_MERGED_NAME,
+        'employment': sum(r['employment'] for r in paris),
+    })
+    return rest
+
+
+def top_region_analysis(min_regions: int = 5, max_year: int | None = None,
+                        merge_paris: bool = False) -> pd.DataFrame:
     """For each EU-27 country, find the top employment region and build a full time series."""
     print("[+] Fetching EU-wide employment data...", flush=True)
     emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
@@ -838,6 +853,10 @@ def top_region_analysis(min_regions: int = 5, max_year: int | None = None) -> pd
     all_years_data = _extract_all_nuts3_all_years(emp_raw)
     if max_year is not None:
         all_years_data = {yr: v for yr, v in all_years_data.items() if yr <= max_year}
+    if merge_paris:
+        for yr in all_years_data:
+            if 'FR' in all_years_data[yr]:
+                all_years_data[yr]['FR'] = _merge_paris_in_year_data(all_years_data[yr]['FR'])
     years = sorted(all_years_data.keys())
 
     rows = []
@@ -918,7 +937,7 @@ def plot_top_regions(df: pd.DataFrame):
     for j in range(i + 1, len(axes)):
         axes[j].set_visible(False)
 
-    fig.suptitle('Top Region Employment Share Trajectories — EU Countries',
+    fig.suptitle('Top Region Employment Share Trajectories · EU Countries',
                  fontsize=15, fontweight='bold', y=1.01)
     fig.tight_layout()
     path1 = out_dir / "concentration_top_region_trajectories.png"
@@ -948,11 +967,11 @@ def plot_top_regions(df: pd.DataFrame):
     colors = [pos_color if d > 0 else neg_color for d in sdf['delta']]
     bars = ax.barh(range(len(sdf)), sdf['delta'], color=colors, edgecolor='white', linewidth=0.5)
     ax.set_yticks(range(len(sdf)))
-    labels = [f"{r['country']} — {r['region_name'][:25]}" for _, r in sdf.iterrows()]
+    labels = [f"{r['country']} · {r['region_name'][:25]}" for _, r in sdf.iterrows()]
     ax.set_yticklabels(labels, fontsize=9)
     ax.set_xlabel('Change in national employment share (pp)', fontsize=11, labelpad=10)
-    yr_range = f"{sdf.iloc[0]['first_year']}–{sdf.iloc[0]['last_year']}"
-    ax.set_title(f'Change in Top Region Employment Share ({yr_range})',
+    yr_range = f"{sdf.iloc[0]['first_year']}-{sdf.iloc[0]['last_year']}"
+    ax.set_title(f'Change in Top Region Employment Share · {yr_range}',
                  fontsize=14, fontweight='bold', pad=15)
     ax.axvline(0, color='black', linewidth=0.8)
 
@@ -980,7 +999,7 @@ def share_delta_analysis(countries: list[str],
                          compare_year: int = 2000,
                          min_regions: int = 5) -> pd.DataFrame:
     """Compute per-NUTS-3 employment share change between two years."""
-    print(f"[+] Computing employment share delta {compare_year}–{year}...", flush=True)
+    print(f"[+] Computing employment share delta {compare_year}-{year}...", flush=True)
     emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
                                   wstatus="EMP", nace_r2="TOTAL")
     all_years_data = _extract_all_nuts3_all_years(emp_raw)
@@ -1048,9 +1067,11 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
                           year: int, compare_year: int,
                           metrics: list[str] | None = None,
                           cmap_spec: str = '#2166ac,#ffffff,#b2182b',
-                          gamma: float = 0.4):
+                          gamma: float = 0.4,
+                          merge_paris: bool = False):
     """Choropleth maps of employment change per NUTS-3 region."""
     from map_utils import fetch_nuts3_geometry, plot_choropleth
+    from paris_merge import merge_paris_geometry
 
     if metrics is None:
         metrics = ['share_delta']
@@ -1063,6 +1084,8 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
     _apply_bg()
 
     gdf = fetch_nuts3_geometry()
+    if merge_paris:
+        gdf = merge_paris_geometry(gdf)
 
     for mkey in metrics:
         mdef = metric_defs[mkey]
@@ -1092,7 +1115,7 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
                 value_col=vcol,
                 merge_left='NUTS_ID',
                 merge_right='nuts3',
-                title=f'{mdef["title_prefix"]} — {cc} NUTS-3 ({compare_year}–{year})',
+                title=f'{mdef["title_prefix"]} · {cc} NUTS-3 ({compare_year}-{year})',
                 colorbar_label=mdef['colorbar_label'],
                 output_file=out_path,
                 vmin=vmin, vmax=vmax, vcenter=0.0,
@@ -1207,14 +1230,14 @@ def plot_share_scatter(df: pd.DataFrame, year: int, compare_year: int,
 
     ax.axhline(0, color='#999999', linewidth=0.8, linestyle='-', zorder=1)
     ax.set_xlabel(f'Employment share in {compare_year} (%)', fontsize=13)
-    ax.set_ylabel(f'Change in employment share {compare_year}–{year} (pp)', fontsize=13)
+    ax.set_ylabel(f'Change in employment share {compare_year}-{year} (pp)', fontsize=13)
     if target_pct > 0:
         suffix = f'Regions Covering ~{target_pct:.0f}% of Jobs ({compare_year})'
     elif top_n > 0:
         suffix = f'Top {top_n} per Country'
     else:
         suffix = 'All Regions'
-    ax.set_title(f'Job Share ({compare_year}) vs Share Change ({compare_year}–{year}) · {suffix}',
+    ax.set_title(f'Job Share ({compare_year}) vs Share Change ({compare_year}-{year}) · {suffix}',
                  fontsize=15, fontweight='bold', pad=12)
     ax.legend(fontsize=11, loc='upper left', facecolor=lc, edgecolor=lc)
     ax.tick_params(labelsize=11)
@@ -1339,7 +1362,7 @@ def plot_results(df: pd.DataFrame, country_code: str, mode: str, target_val: flo
         latest = df.iloc[-1]
         total_m = int(latest['total_regions'])
         area_pct = latest['area_pct']
-        title = f'Top-{n} Regional Employment Concentration Ratio ($CR_{{{n}}}$) — {cc}'
+        title = f'Top-{n} Regional Employment Concentration Ratio ($CR_{{{n}}}$) · {cc}'
         subtitle = f'{n}/{total_m} regions, representing {area_pct:.1f}% of the country area'
         ax.set_title(title, fontsize=14, fontweight='bold', pad=25)
         fig.text(0.5, 0.92, subtitle, ha='center', fontsize=11, style='italic')
@@ -1407,7 +1430,7 @@ def main():
                            help="Exclude countries with fewer NUTS-3 regions (default: 0)")
     eu_parser.add_argument("--compare-year", type=int, default=2000,
                            help="Baseline year for trend (default: 2000). Avoid crisis "
-                                "troughs (2009-2012) — they inflate concentration "
+                                "troughs (2009-2012) - they inflate concentration "
                                 "artificially, understating the real trend.")
     eu_parser.add_argument("--save-data", metavar="DIR", nargs="?", const="input",
                            help="Save fetched data as CSV (default dir: input/)")
@@ -1424,6 +1447,8 @@ def main():
                             help="Exclude countries with fewer NUTS-3 regions (default: 0)")
     cap_parser.add_argument("--year", type=int, default=None,
                             help="Cap time series at this year (default: use all available)")
+    cap_parser.add_argument("--merge-paris", action="store_true",
+                            help="Merge FR101+FR105+FR106+FR107 into Paris + Petite Couronne")
 
     smap_parser = subparsers.add_parser("share-map",
                                         help="NUTS-3 choropleth of employment share change")
@@ -1441,6 +1466,8 @@ def main():
                              help="Gamma for symmetric norm (default: 0.4)")
     smap_parser.add_argument("--metrics", type=str, default="share_delta,emp_change",
                              help="Comma-separated metrics: share_delta, emp_change (default: both)")
+    smap_parser.add_argument("--merge-paris", action="store_true",
+                             help="Merge FR101+FR105+FR106+FR107 into Paris + Petite Couronne")
 
     sscat_parser = subparsers.add_parser("share-scatter",
                                          help="Scatter: job share vs share change")
@@ -1493,7 +1520,8 @@ def main():
 
     if args.mode == 'top':
         df = top_region_analysis(min_regions=args.min_regions,
-                                  max_year=args.year)
+                                  max_year=args.year,
+                                  merge_paris=args.merge_paris)
         if df.empty:
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
@@ -1537,12 +1565,15 @@ def main():
         if df.empty:
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
+        if args.merge_paris:
+            df = _merge_paris_share_data(df)
         metrics = [m.strip() for m in args.metrics.split(',')]
         plot_share_delta_maps(df, countries, year=args.year,
                               compare_year=args.compare_year,
                               metrics=metrics,
                               cmap_spec=args.map_cmap,
-                              gamma=args.map_gamma)
+                              gamma=args.map_gamma,
+                              merge_paris=args.merge_paris)
 
         out_dir = Path(tempfile.gettempdir()) / "concentration"
         csv_path = out_dir / f"concentration_share_delta_{args.compare_year}_{args.year}.csv"
