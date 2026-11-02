@@ -113,8 +113,6 @@ Note on comparability:
     spatial variation is meaningful. The fallback sources documented above (PT
     0012256, ES Ministerio) are not used in the current code.
 
-Dependencies:
-    pip install requests pandas matplotlib numpy xlrd
 """
 
 import argparse

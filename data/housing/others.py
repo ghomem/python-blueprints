@@ -7,8 +7,6 @@ Contextual/framing charts that don't belong in the main analysis scripts.
 Subcommands:
     expenditure     Household expenditure breakdown by COICOP category.
 
-Dependencies:
-    pip install requests pandas matplotlib
 """
 
 import argparse

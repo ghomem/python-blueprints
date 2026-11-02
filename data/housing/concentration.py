@@ -13,8 +13,6 @@ Subcommands:
     top             Top-region share trajectories for all EU-27.
     list-regions    List all NUTS-3 regions for a country.
 
-Dependencies:
-    pip install requests pandas matplotlib
 """
 
 import argparse
