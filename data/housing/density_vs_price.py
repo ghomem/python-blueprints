@@ -144,11 +144,8 @@ _MAP_VCENTER: float | None = None # set by --map-vcenter
 _NO_MAP_LABELS: bool = False      # set by --no-map-labels
 _MERGE_PARIS: bool = False        # set by --merge-paris
 
-# Paris "Petite Couronne" merge — the four NUTS-3 regions that form
-# the contiguous urban core (Paris + 3 inner-ring départements).
-PARIS_MERGE_CODES = frozenset({'FR101', 'FR105', 'FR106', 'FR107'})
-PARIS_MERGED_CODE = 'FR1PC'
-PARIS_MERGED_NAME = 'Paris + Petite Couronne'
+from paris_merge import PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME
+from paris_merge import merge_paris_geometry as _merge_paris_geometry_impl
 
 
 def _apply_bg():
@@ -1376,27 +1373,7 @@ def _merge_paris_regions(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _merge_paris_geometry(gdf):
-    """Merge FR101, FR105, FR106, FR107 geometries into a single FR1PC polygon."""
-    import geopandas as gpd
-    from shapely.ops import unary_union
-
-    paris_rows = gdf[gdf['NUTS_ID'].isin(PARIS_MERGE_CODES)]
-    if paris_rows.empty:
-        return gdf
-
-    merged_geom = unary_union(paris_rows.geometry)
-
-    # Build the new row from the first Paris row, overriding key fields
-    new_row = paris_rows.iloc[0].copy()
-    new_row['NUTS_ID'] = PARIS_MERGED_CODE
-    new_row['NAME_LATN'] = PARIS_MERGED_NAME
-    new_row['geometry'] = merged_geom
-
-    rest = gdf[~gdf['NUTS_ID'].isin(PARIS_MERGE_CODES)]
-    return gpd.GeoDataFrame(
-        pd.concat([rest, pd.DataFrame([new_row])], ignore_index=True),
-        geometry='geometry', crs=gdf.crs,
-    )
+    return _merge_paris_geometry_impl(gdf)
 
 
 def _tourism_colors(base_hex, npw_values, norm):

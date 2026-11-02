@@ -1106,6 +1106,151 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
             )
 
 
+from paris_merge import PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME
+
+
+def _merge_paris_share_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Merge Paris + petite couronne into a single row, recomputing shares."""
+    paris_mask = df['nuts3'].isin(PARIS_MERGE_CODES)
+    if paris_mask.sum() == 0:
+        return df
+    paris = df[paris_mask]
+    rest = df[~paris_mask].copy()
+
+    emp_start = paris['emp_start'].sum()
+    emp_end = paris['emp_end'].sum()
+
+    fr_total_start = df[df['country'] == 'FR']['emp_start'].sum()
+    fr_total_end = df[df['country'] == 'FR']['emp_end'].sum()
+    share_start = emp_start / fr_total_start * 100 if fr_total_start else 0
+    share_end = emp_end / fr_total_end * 100 if fr_total_end else 0
+
+    merged_row = pd.DataFrame([{
+        'country': 'FR',
+        'nuts3': PARIS_MERGED_CODE,
+        'region_name': PARIS_MERGED_NAME,
+        'share_start': share_start,
+        'share_end': share_end,
+        'share_delta_pp': share_end - share_start,
+        'emp_start': emp_start,
+        'emp_end': emp_end,
+        'emp_change_pct': ((emp_end - emp_start) / emp_start * 100
+                           if emp_start > 0 else None),
+    }])
+    return pd.concat([rest, merged_row], ignore_index=True)
+
+
+COUNTRY_COLORS = {
+    'PT': '#d95f02',
+    'ES': '#0051b5',
+    'FR': '#2ca02c',
+    'NL': '#7b2d8e',
+    'IT': '#9b2335',
+}
+
+
+def plot_share_scatter(df: pd.DataFrame, year: int, compare_year: int,
+                       top_n: int = 0, target_pct: float = 0,
+                       merge_paris: bool = False):
+    """Scatter: job share in compare_year (x) vs share-point change (y), per region."""
+    import numpy as np
+
+    if merge_paris:
+        df = _merge_paris_share_data(df)
+
+    if target_pct > 0:
+        def _keep_until_target(g):
+            g = g.sort_values('share_start', ascending=False)
+            cumsum = g['share_start'].cumsum()
+            return g[cumsum.shift(1, fill_value=0) < target_pct]
+        df = (df.groupby('country', group_keys=False)
+              .apply(_keep_until_target)
+              .reset_index(drop=True))
+    elif top_n > 0:
+        df = (df.groupby('country', group_keys=False)
+              .apply(lambda g: g.nlargest(top_n, 'share_start'))
+              .reset_index(drop=True))
+
+    out_dir = Path(tempfile.gettempdir()) / "concentration"
+    out_dir.mkdir(exist_ok=True)
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    _apply_bg()
+
+    lc = _BG_COLOR or '#ffffff'
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    countries = sorted(df['country'].unique())
+    for cc in countries:
+        cdf = df[df['country'] == cc]
+        color = COUNTRY_COLORS.get(cc, '#333333')
+        ax.scatter(cdf['share_start'], cdf['share_delta_pp'],
+                   c=color, label=cc, s=50, alpha=0.75, edgecolors=color,
+                   linewidths=0.5, zorder=3)
+        for _, row in cdf.iterrows():
+            name = row['region_name']
+            if len(name) > 35:
+                name = name[:33] + '…'
+            ax.annotate(name, (row['share_start'], row['share_delta_pp']),
+                        textcoords='offset points', xytext=(5, 4),
+                        fontsize=6.5, color=color, alpha=0.85)
+
+    x_all = df['share_start'].values
+    y_all = df['share_delta_pp'].values
+    mask = np.isfinite(x_all) & np.isfinite(y_all)
+    if mask.sum() > 2:
+        coeffs = np.polyfit(x_all[mask], y_all[mask], 1)
+        r2 = 1 - (np.sum((y_all[mask] - np.polyval(coeffs, x_all[mask]))**2) /
+                   np.sum((y_all[mask] - y_all[mask].mean())**2))
+        x_fit = np.linspace(x_all[mask].min(), x_all[mask].max(), 100)
+        ax.plot(x_fit, np.polyval(coeffs, x_fit), '--', color='#555555',
+                linewidth=1.5, alpha=0.7,
+                label=f'Linear fit (R² = {r2:.3f})')
+
+    ax.axhline(0, color='#999999', linewidth=0.8, linestyle='-', zorder=1)
+    ax.set_xlabel(f'Employment share in {compare_year} (%)', fontsize=13)
+    ax.set_ylabel(f'Change in employment share {compare_year}–{year} (pp)', fontsize=13)
+    if target_pct > 0:
+        suffix = f'Regions Covering ~{target_pct:.0f}% of Jobs ({compare_year})'
+    elif top_n > 0:
+        suffix = f'Top {top_n} per Country'
+    else:
+        suffix = 'All Regions'
+    ax.set_title(f'Job Share ({compare_year}) vs Share Change ({compare_year}–{year}) · {suffix}',
+                 fontsize=15, fontweight='bold', pad=12)
+    ax.legend(fontsize=11, loc='upper left', facecolor=lc, edgecolor=lc)
+    ax.tick_params(labelsize=11)
+
+    info_lines = []
+    for cc in countries:
+        cdf = df[df['country'] == cc]
+        n = len(cdf)
+        pct = cdf['share_start'].sum()
+        info_lines.append(f'{cc}: {n} regions · {pct:.0f}%')
+    info_text = '\n'.join(info_lines)
+    ax.text(0.99, 0.02, info_text, transform=ax.transAxes,
+            fontsize=9, fontfamily='monospace', verticalalignment='bottom',
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round,pad=0.4', facecolor=lc,
+                      edgecolor='#cccccc', alpha=0.9))
+
+    fig.tight_layout()
+    if target_pct > 0:
+        tag = f"_target{int(target_pct)}pct"
+    elif top_n > 0:
+        tag = f"_top{top_n}"
+    else:
+        tag = ""
+    out_path = out_dir / f"concentration_share_scatter_{compare_year}_{year}{tag}.png"
+    fig.savefig(out_path, dpi=180, bbox_inches='tight')
+    plt.close(fig)
+    print(f"[+] Saved: {out_path}")
+
+    csv_path = out_dir / f"concentration_share_scatter_{compare_year}_{year}{tag}.csv"
+    df.to_csv(csv_path, index=False, float_format='%.4f')
+    print(f"[+] CSV exported to: {csv_path}")
+
+
 def plot_region_timeseries(raw_df: pd.DataFrame, nuts3: str, output_file: str):
     """Dual-axis time series: nominal employment and share of national total."""
     cc = nuts3[:2]
@@ -1299,6 +1444,23 @@ def main():
     smap_parser.add_argument("--metrics", type=str, default="share_delta,emp_change",
                              help="Comma-separated metrics: share_delta, emp_change (default: both)")
 
+    sscat_parser = subparsers.add_parser("share-scatter",
+                                         help="Scatter: job share vs share change")
+    sscat_parser.add_argument("--countries", type=str, default="PT,ES,FR,IT,NL",
+                              help="Comma-separated country codes")
+    sscat_parser.add_argument("--year", type=int, default=2023,
+                              help="End year (default: 2023)")
+    sscat_parser.add_argument("--compare-year", type=int, default=2000,
+                              help="Start year (default: 2000)")
+    sscat_parser.add_argument("--min-regions", type=int, default=5,
+                              help="Minimum regions per country")
+    sscat_parser.add_argument("--top-n", type=int, default=0,
+                              help="Keep only top N regions per country by starting share")
+    sscat_parser.add_argument("--target-pct", type=float, default=0,
+                              help="Keep regions covering this %% of jobs in compare-year")
+    sscat_parser.add_argument("--merge-paris", action="store_true",
+                              help="Merge FR101+FR105+FR106+FR107 into Paris + Petite Couronne")
+
     list_parser = subparsers.add_parser("list-regions",
                                         help="List all NUTS-3 regions for a country")
     list_parser.add_argument("country", type=str, help="2-letter EU country code")
@@ -1388,6 +1550,19 @@ def main():
         csv_path = out_dir / f"concentration_share_delta_{args.compare_year}_{args.year}.csv"
         df.to_csv(csv_path, index=False, float_format='%.4f')
         print(f"[+] CSV exported to: {csv_path}")
+        return
+
+    if args.mode == 'share-scatter':
+        countries = [c.strip().upper() for c in args.countries.split(',')]
+        df = share_delta_analysis(countries, year=args.year,
+                                  compare_year=args.compare_year,
+                                  min_regions=args.min_regions)
+        if df.empty:
+            print("[-] No data", file=sys.stderr)
+            sys.exit(1)
+        plot_share_scatter(df, year=args.year, compare_year=args.compare_year,
+                           top_n=args.top_n, target_pct=args.target_pct,
+                           merge_paris=args.merge_paris)
         return
 
     if args.mode == 'eu':
