@@ -93,6 +93,33 @@ employer contributions) are marked with a **black circle** on plots.
 Measures how concentrated employment is in a country's top regions, using
 Eurostat NUTS-3 data (nama_10r_3empers).
 
+### Local data
+
+All EU-wide subcommands fetch from Eurostat by default. To avoid re-fetching
+on every run, download once and reuse:
+
+```bash
+# Download all Eurostat datasets to input/ (employment, area, GDP, gini, fertility)
+python3 concentration.py fetch
+
+# Any subcommand can then read from local CSVs
+python3 concentration.py --local-data eu 50 --year 2023
+python3 concentration.py --local-data top --merge-paris
+python3 concentration.py --local-data share-map --countries PT,ES,FR
+python3 concentration.py --local-data share-scatter --countries PT,ES,FR,IT,NL
+```
+
+`fetch` saves to `input/` by default; `--local-data` reads from `input/` by
+default. Pass a directory argument to either to use a different path. Files:
+
+```
+nama_10r_3empers.csv     NUTS-3 employment (all EU-27, all years)
+reg_area3.csv            NUTS-3 land area (km²)
+gdp_per_capita.csv       GDP per capita by country
+gini.csv                 Gini coefficient by country
+fertility.csv            Fertility rate by country
+```
+
 ### Subcommands
 
 **Single country:**
@@ -125,17 +152,24 @@ python3 concentration.py eu 50 --compare-year 2007
 
 # Capital/top-region share trajectories across all EU-27
 python3 concentration.py top
+
+# NUTS-3 employment share change maps
+python3 concentration.py share-map --countries PT,ES,FR,IT,NL --merge-paris
+
+# Share vs share-change scatter
+python3 concentration.py share-scatter --countries PT,ES,FR,IT,NL --target-pct 25
 ```
 
 ### Output
 
 Plots go to `/tmp/concentration/`. The `eu` command produces two bar charts
 (region fraction and area fraction); `top` produces small-multiples line charts
-and a summary bar chart.
+and a summary bar chart; `share-map` produces choropleth maps; `share-scatter`
+produces a scatter plot of starting share vs change.
 
 ### Notes
 
-- The `--compare-year` for `eu` defaults to 2000. Avoid using 2009–2012 as a
+- The `--compare-year` for `eu` defaults to 2000. Avoid using 2009-2012 as a
   baseline - the financial crisis hit peripheral regions harder than capitals,
   temporarily inflating concentration. Measuring from a crisis trough understates
   the real structural trend.

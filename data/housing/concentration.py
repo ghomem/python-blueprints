@@ -6,6 +6,7 @@ Queries Eurostat API for NUTS-3 regional employment data and plots
 concentration metrics over time.
 
 Subcommands:
+    fetch           Download all Eurostat data to a local directory.
     cr <n>          Concentration ratio: share held by top n regions.
     target <pct>    Minimum regions needed to reach pct% of employment.
     eu <pct>        Compare all EU-27 countries for a given target.
@@ -57,6 +58,93 @@ def _load_csv(name: str) -> pd.DataFrame | None:
         print(f"  [local] {path}")
         return pd.read_csv(path)
     return None
+
+
+def _load_or_fetch_employment() -> dict[int, dict[str, list[dict]]]:
+    """Load employment data from local CSV or fetch from Eurostat."""
+    cached = _load_csv("nama_10r_3empers.csv")
+    if cached is not None:
+        result: dict[int, dict[str, list[dict]]] = {}
+        for (year, cc), g in cached.groupby(['year', 'country']):
+            result.setdefault(int(year), {})[cc] = [
+                {'region_code': r['region_code'],
+                 'region_name': r['region_name'],
+                 'employment': float(r['employment'])}
+                for _, r in g.iterrows()
+            ]
+        return result
+    print("[+] Fetching EU-wide employment data...", flush=True)
+    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
+                                  wstatus="EMP", nace_r2="TOTAL")
+    all_years = _extract_all_nuts3_all_years(emp_raw)
+    _save_employment(all_years)
+    return all_years
+
+
+def _save_employment(all_years: dict[int, dict[str, list[dict]]]):
+    """Flatten all-years employment dict to CSV and save if in save mode."""
+    rows = []
+    for year, by_cc in sorted(all_years.items()):
+        for cc, regions in sorted(by_cc.items()):
+            for r in regions:
+                rows.append({
+                    'year': year, 'country': cc,
+                    'region_code': r['region_code'],
+                    'region_name': r['region_name'],
+                    'employment': r['employment'],
+                })
+    _save_csv(pd.DataFrame(rows), "nama_10r_3empers.csv")
+
+
+def _load_or_fetch_area() -> dict[str, dict[str, float]]:
+    """Load area data from local CSV or fetch from Eurostat."""
+    cached = _load_csv("reg_area3.csv")
+    if cached is not None:
+        result: dict[str, dict[str, float]] = {}
+        for _, r in cached.iterrows():
+            result.setdefault(r['country'], {})[r['region_code']] = float(r['area_km2'])
+        return result
+    print("[+] Fetching EU-wide area data...", flush=True)
+    area_raw = _fetch_all_eurostat("reg_area3", landuse="L0008")
+    area_by_cc = _extract_all_area(area_raw)
+    _save_area(area_by_cc)
+    return area_by_cc
+
+
+def _save_area(area_by_cc: dict[str, dict[str, float]]):
+    rows = []
+    for cc, regions in sorted(area_by_cc.items()):
+        for code, km2 in sorted(regions.items()):
+            rows.append({'country': cc, 'region_code': code, 'area_km2': km2})
+    _save_csv(pd.DataFrame(rows), "reg_area3.csv")
+
+
+def _load_or_fetch_country_indicator(name: str, fetcher, year: int) -> dict[str, float]:
+    """Load a country-level indicator from local CSV or fetch from Eurostat."""
+    csv_name = f"{name}.csv"
+    cached = _load_csv(csv_name)
+    if cached is not None:
+        return dict(zip(cached['country'], cached['value']))
+    print(f"[+] Fetching {name}...", flush=True)
+    result = fetcher(year)
+    _save_csv(pd.DataFrame([{'country': k, 'value': v}
+                             for k, v in sorted(result.items())]), csv_name)
+    return result
+
+
+def fetch_all_data(output_dir: Path):
+    """Download all Eurostat datasets and save as local CSVs."""
+    global INPUT_DIR, SAVE_MODE
+    INPUT_DIR = output_dir
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    SAVE_MODE = True
+    print(f"[*] Downloading all Eurostat data to {INPUT_DIR}/")
+    _load_or_fetch_employment()
+    _load_or_fetch_area()
+    _load_or_fetch_country_indicator("gdp_per_capita", _fetch_gdp_per_capita, 2023)
+    _load_or_fetch_country_indicator("gini", _fetch_gini, 2023)
+    _load_or_fetch_country_indicator("fertility", _fetch_fertility, 2023)
+    print(f"[+] All data saved to {INPUT_DIR}/")
 
 
 def fetch_population(country_code: str, year: int) -> int | None:
@@ -612,37 +700,18 @@ def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
 def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
                   compare_year: int | None = None):
     """Compute concentration metrics for all EU-27 countries."""
-    csv_name = f"concentration_{int(target_pct)}pct_{year}.csv"
-    cached = _load_csv(csv_name)
-    if cached is not None:
-        if min_regions > 0:
-            cached = cached[cached['total_regions'] >= min_regions].reset_index(drop=True)
-        return cached
+    all_years_data = _load_or_fetch_employment()
+    area_by_cc = _load_or_fetch_area()
+    gdp_pc = _load_or_fetch_country_indicator(
+        "gdp_per_capita", _fetch_gdp_per_capita, year)
+    gini = _load_or_fetch_country_indicator(
+        "gini", _fetch_gini, year)
+    fertility = _load_or_fetch_country_indicator(
+        "fertility", _fetch_fertility, year)
 
-    years = [year]
+    emp_by_year = {year: all_years_data.get(year, {})}
     if compare_year:
-        years.append(compare_year)
-
-    print(f"[+] Fetching EU-wide employment data...", flush=True)
-    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
-                                  wstatus="EMP", nace_r2="TOTAL")
-
-    print("[+] Fetching EU-wide area data...", flush=True)
-    area_data = _fetch_all_eurostat("reg_area3", landuse="L0008")
-    area_by_cc = _extract_all_area(area_data)
-
-    print("[+] Fetching GDP per capita...", flush=True)
-    gdp_pc = _fetch_gdp_per_capita(year)
-
-    print("[+] Fetching Gini coefficient...", flush=True)
-    gini = _fetch_gini(year)
-
-    print("[+] Fetching fertility rate...", flush=True)
-    fertility = _fetch_fertility(year)
-
-    emp_by_year = {}
-    for yr in years:
-        emp_by_year[yr] = _extract_all_nuts3(emp_raw, yr)
+        emp_by_year[compare_year] = all_years_data.get(compare_year, {})
 
     df = _compute_concentration(target_pct, emp_by_year[year], area_by_cc, min_regions)
     df['gdp_per_capita'] = df['country'].map(gdp_pc)
@@ -659,7 +728,6 @@ def eu_comparison(target_pct: float, year: int, min_regions: int = 0,
             df['area_pct_cmp'] = df['country'].map(
                 cmp['area_pct']).astype(float)
 
-    _save_csv(df, csv_name)
     return df
 
 
@@ -847,10 +915,7 @@ def _merge_paris_in_year_data(year_regions: list[dict]) -> list[dict]:
 def top_region_analysis(min_regions: int = 5, max_year: int | None = None,
                         merge_paris: bool = False) -> pd.DataFrame:
     """For each EU-27 country, find the top employment region and build a full time series."""
-    print("[+] Fetching EU-wide employment data...", flush=True)
-    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
-                                  wstatus="EMP", nace_r2="TOTAL")
-    all_years_data = _extract_all_nuts3_all_years(emp_raw)
+    all_years_data = _load_or_fetch_employment()
     if max_year is not None:
         all_years_data = {yr: v for yr, v in all_years_data.items() if yr <= max_year}
     if merge_paris:
@@ -1000,9 +1065,7 @@ def share_delta_analysis(countries: list[str],
                          min_regions: int = 5) -> pd.DataFrame:
     """Compute per-NUTS-3 employment share change between two years."""
     print(f"[+] Computing employment share delta {compare_year}-{year}...", flush=True)
-    emp_raw = _fetch_all_eurostat("nama_10r_3empers", unit="THS",
-                                  wstatus="EMP", nace_r2="TOTAL")
-    all_years_data = _extract_all_nuts3_all_years(emp_raw)
+    all_years_data = _load_or_fetch_employment()
 
     rows = []
     for cc in countries:
@@ -1410,7 +1473,12 @@ def main():
                         help='Override bar color for bar charts (e.g. "#9b2335")')
     parser.add_argument('--bar-color-neg', type=str, default=None,
                         help='Override color for negative bars in delta charts (e.g. "#5B9BD5")')
+    parser.add_argument('--local-data', metavar="DIR", nargs="?", const="input",
+                        help='Read from local CSVs instead of fetching (default dir: input/)')
     subparsers = parser.add_subparsers(dest="mode", required=True)
+
+    subparsers.add_parser("fetch",
+                          help="Download all Eurostat data to local CSVs")
 
     cr_parser = subparsers.add_parser("cr", help="Concentration ratio of top n regions")
     cr_parser.add_argument("country", type=str, help="2-letter EU country code")
@@ -1432,10 +1500,6 @@ def main():
                            help="Baseline year for trend (default: 2000). Avoid crisis "
                                 "troughs (2009-2012) - they inflate concentration "
                                 "artificially, understating the real trend.")
-    eu_parser.add_argument("--save-data", metavar="DIR", nargs="?", const="input",
-                           help="Save fetched data as CSV (default dir: input/)")
-    eu_parser.add_argument("--local-data", metavar="DIR", nargs="?", const="input",
-                           help="Read from local CSV instead of fetching")
 
     region_parser = subparsers.add_parser("region", help="Time series for a single NUTS-3 region")
     region_parser.add_argument("nuts3", type=str, help="NUTS-3 code (e.g. PT1A0, ES300, DE600)")
@@ -1503,6 +1567,17 @@ def main():
     if args.bar_color_neg:
         global _BAR_COLOR_NEG
         _BAR_COLOR_NEG = args.bar_color_neg
+
+    if args.mode == 'fetch':
+        fetch_all_data(Path(args.local_data or "input"))
+        return
+
+    if args.local_data:
+        global INPUT_DIR
+        INPUT_DIR = Path(args.local_data)
+        if not INPUT_DIR.is_dir():
+            parser.error(f"--local-data directory does not exist: {INPUT_DIR}")
+        print(f"[*] Using local data from {INPUT_DIR}/")
 
     if args.mode == 'list-regions':
         raw_df = fetch_eurostat_data(args.country)
@@ -1595,17 +1670,6 @@ def main():
         return
 
     if args.mode == 'eu':
-        global INPUT_DIR, SAVE_MODE
-        if getattr(args, 'local_data', None):
-            INPUT_DIR = Path(args.local_data)
-            if not INPUT_DIR.is_dir():
-                parser.error(f"--local-data directory does not exist: {INPUT_DIR}")
-            print(f"[*] Using local data from {INPUT_DIR}/")
-        elif getattr(args, 'save_data', None):
-            INPUT_DIR = Path(args.save_data)
-            INPUT_DIR.mkdir(parents=True, exist_ok=True)
-            SAVE_MODE = True
-            print(f"[*] Will save data to {INPUT_DIR}/")
         df = eu_comparison(args.pct, args.year, min_regions=args.min_regions,
                            compare_year=args.compare_year)
         if df.empty:
