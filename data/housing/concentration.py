@@ -686,6 +686,8 @@ def _compute_concentration(target_pct: float, emp_by_cc: dict, area_by_cc: dict,
                 break
 
         total_regions = len(regions)
+        # Filter area to codes present in employment — NUTS revisions can
+        # introduce new area codes before employment data catches up.
         emp_codes = {r['region_code'] for r in regions}
         area_dict = {c: a for c, a in area_by_cc.get(cc, {}).items()
                      if c in emp_codes}
@@ -1697,7 +1699,12 @@ def main():
     if hasattr(args, 'merge_paris') and args.merge_paris:
         raw_df = merge_paris_raw_df(raw_df)
 
-    area = fetch_area_data(args.country)
+    # reg_area3 may contain codes from a newer NUTS revision than nama_10r_3empers
+    # (e.g. PT16B-PT16J from NUTS 2024 vs PT1C1-PT1D3 in employment data).
+    # Filter to codes present in both so the area percentage is consistent.
+    area_all = fetch_area_data(args.country)
+    emp_codes = set(raw_df['region_code'].unique())
+    area = {k: v for k, v in area_all.items() if k in emp_codes}
 
     if args.mode == 'cr':
         results_df = calculate_cr_n(raw_df, args.n, area=area)
