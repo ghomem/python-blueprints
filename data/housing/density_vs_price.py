@@ -143,8 +143,9 @@ _NO_MAP_LABELS: bool = False      # set by --no-map-labels
 _MAP_VALUES: bool = False         # set by --map-values
 _MERGE_PARIS: bool = False        # set by --merge-paris
 
-from paris_merge import PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME
-from paris_merge import merge_paris_geometry as _merge_paris_geometry_impl
+from paris_merge import (PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME,
+                          merge_paris_geometry as _merge_paris_geometry_impl,
+                          merge_paris_regions)
 
 
 def _apply_bg():
@@ -1334,43 +1335,6 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
-def _merge_paris_regions(df: pd.DataFrame) -> pd.DataFrame:
-    """Merge FR101, FR105, FR106, FR107 into a single 'Paris + Petite Couronne'.
-
-    Uses employment-weighted averages for effort, price, and wage.
-    Density is recomputed as total_employment / total_area.
-    """
-    paris = df[df['nuts3'].isin(PARIS_MERGE_CODES)]
-    if paris.empty:
-        return df
-    rest = df[~df['nuts3'].isin(PARIS_MERGE_CODES)].copy()
-
-    total_emp = paris['employment_ths'].sum()
-    if total_emp == 0:
-        return df
-
-    total_area = paris['area_km2'].sum()
-    w = paris['employment_ths']  # weights
-
-    merged_row = {
-        'nuts3': PARIS_MERGED_CODE,
-        'name': PARIS_MERGED_NAME,
-        'employment_ths': total_emp,
-        'area_km2': total_area,
-        'jobs_per_km2': (total_emp * 1000) / total_area,
-        'price_eur_m2': (paris['price_eur_m2'] * w).sum() / total_emp,
-        'avg_annual_wage': (paris['avg_annual_wage'] * w).sum() / total_emp,
-        'effort_months_per_m2': (paris['effort_months_per_m2'] * w).sum() / total_emp,
-        'wage_fallback': False,
-    }
-    merged_row['monthly_wage'] = merged_row['avg_annual_wage'] / 12
-
-    if 'nuts2' in paris.columns:
-        merged_row['nuts2'] = 'FR10'
-
-    return pd.concat([rest, pd.DataFrame([merged_row])], ignore_index=True)
-
-
 def _merge_paris_geometry(gdf):
     return _merge_paris_geometry_impl(gdf)
 
@@ -2504,7 +2468,7 @@ def main():
             if args.exclude_paris:
                 df = df[df['nuts3'] != 'FR101'].reset_index(drop=True)
             if args.merge_paris and country == 'FR':
-                df = _merge_paris_regions(df)
+                df = merge_paris_regions(df)
             if tourism:
                 df = add_tourism_intensity(df, tourism)
                 matched = df['nights_per_worker'].notna().sum()

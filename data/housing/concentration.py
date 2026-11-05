@@ -24,6 +24,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
+from paris_merge import (PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME,
+                          merge_paris_raw_df, merge_paris_in_year_data,
+                          merge_paris_share_data)
+
 INPUT_DIR: Path | None = None
 SAVE_MODE: bool = False
 _BG_COLOR: str | None = None
@@ -900,20 +904,6 @@ def _extract_all_nuts3_all_years(data: dict) -> dict[int, dict[str, list[dict]]]
     return result
 
 
-def _merge_paris_in_year_data(year_regions: list[dict]) -> list[dict]:
-    """Merge FR101+FR105+FR106+FR107 into a single FR1PC entry in a year's region list."""
-    paris = [r for r in year_regions if r['region_code'] in PARIS_MERGE_CODES]
-    if len(paris) == 0:
-        return year_regions
-    rest = [r for r in year_regions if r['region_code'] not in PARIS_MERGE_CODES]
-    rest.append({
-        'region_code': PARIS_MERGED_CODE,
-        'region_name': PARIS_MERGED_NAME,
-        'employment': sum(r['employment'] for r in paris),
-    })
-    return rest
-
-
 def top_region_analysis(min_regions: int = 5, max_year: int | None = None,
                         merge_paris: bool = False) -> pd.DataFrame:
     """For each EU-27 country, find the top employment region and build a full time series."""
@@ -923,7 +913,7 @@ def top_region_analysis(min_regions: int = 5, max_year: int | None = None,
     if merge_paris:
         for yr in all_years_data:
             if 'FR' in all_years_data[yr]:
-                all_years_data[yr]['FR'] = _merge_paris_in_year_data(all_years_data[yr]['FR'])
+                all_years_data[yr]['FR'] = merge_paris_in_year_data(all_years_data[yr]['FR'])
     years = sorted(all_years_data.keys())
 
     rows = []
@@ -1194,40 +1184,6 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
             )
 
 
-from paris_merge import PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME
-
-
-def _merge_paris_share_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Merge Paris + petite couronne into a single row, recomputing shares."""
-    paris_mask = df['nuts3'].isin(PARIS_MERGE_CODES)
-    if paris_mask.sum() == 0:
-        return df
-    paris = df[paris_mask]
-    rest = df[~paris_mask].copy()
-
-    emp_start = paris['emp_start'].sum()
-    emp_end = paris['emp_end'].sum()
-
-    fr_total_start = df[df['country'] == 'FR']['emp_start'].sum()
-    fr_total_end = df[df['country'] == 'FR']['emp_end'].sum()
-    share_start = emp_start / fr_total_start * 100 if fr_total_start else 0
-    share_end = emp_end / fr_total_end * 100 if fr_total_end else 0
-
-    merged_row = pd.DataFrame([{
-        'country': 'FR',
-        'nuts3': PARIS_MERGED_CODE,
-        'region_name': PARIS_MERGED_NAME,
-        'share_start': share_start,
-        'share_end': share_end,
-        'share_delta_pp': share_end - share_start,
-        'emp_start': emp_start,
-        'emp_end': emp_end,
-        'emp_change_pct': ((emp_end - emp_start) / emp_start * 100
-                           if emp_start > 0 else None),
-    }])
-    return pd.concat([rest, merged_row], ignore_index=True)
-
-
 COUNTRY_COLORS = {
     'PT': '#d95f02',
     'ES': '#0051b5',
@@ -1244,7 +1200,7 @@ def plot_share_scatter(df: pd.DataFrame, year: int, compare_year: int,
     import numpy as np
 
     if merge_paris:
-        df = _merge_paris_share_data(df)
+        df = merge_paris_share_data(df)
 
     if target_pct > 0:
         def _keep_until_target(g):
@@ -1495,6 +1451,8 @@ def main():
     target_parser.add_argument("-o", "--output", type=str, default=None)
     target_parser.add_argument("--year", type=int, default=None,
                                help="Reference year (default: latest available)")
+    target_parser.add_argument("--merge-paris", action="store_true",
+                               help="Merge Paris + petite couronne into one region")
 
     eu_parser = subparsers.add_parser("eu", help="Compare all EU-27 countries")
     eu_parser.add_argument("pct", type=float, help="Target employment share (e.g. 50 for 50%%)")
@@ -1660,7 +1618,7 @@ def main():
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
         if args.merge_paris:
-            df = _merge_paris_share_data(df)
+            df = merge_paris_share_data(df)
         metrics = [m.strip() for m in args.metrics.split(',')]
         plot_share_delta_maps(df, countries, year=args.year,
                               compare_year=args.compare_year,
@@ -1732,6 +1690,9 @@ def main():
 
     if hasattr(args, 'year') and args.year is not None:
         raw_df = raw_df[raw_df['year'] <= args.year]
+
+    if hasattr(args, 'merge_paris') and args.merge_paris:
+        raw_df = merge_paris_raw_df(raw_df)
 
     area = fetch_area_data(args.country)
 
