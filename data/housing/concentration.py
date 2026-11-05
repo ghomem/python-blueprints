@@ -8,10 +8,13 @@ concentration metrics over time.
 Subcommands:
     fetch           Download all Eurostat data to a local directory.
     cr <n>          Concentration ratio: share held by top n regions.
-    target <pct>    Minimum regions needed to reach pct% of employment.
+    target <pct>    Minimum regions to reach pct% of employment, distribution
+                    plot with Gini coefficient, and area share.
     eu <pct>        Compare all EU-27 countries for a given target.
     region <nuts3>  Time series for a single NUTS-3 region.
     top             Top-region share trajectories for all EU-27.
+    share-map       Choropleth maps of employment share change.
+    share-scatter   Scatter of share change vs initial share.
     list-regions    List all NUTS-3 regions for a country.
 
 """
@@ -433,6 +436,19 @@ def print_regions_for_cr(results_df: pd.DataFrame, n: int):
     print("\n" + "=" * 80 + "\n")
 
 
+def gini_coefficient(values) -> float:
+    """Gini coefficient for a sequence of non-negative values (0 = perfect equality, 1 = maximum)."""
+    import numpy as np
+    v = np.array(values, dtype=float)
+    v = v[v >= 0]
+    if len(v) == 0 or v.sum() == 0:
+        return 0.0
+    v = np.sort(v)
+    n = len(v)
+    index = np.arange(1, n + 1)
+    return float((2 * np.sum(index * v) - (n + 1) * np.sum(v)) / (n * np.sum(v)))
+
+
 def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float,
                       n_required: int, output_file: str,
                       area: dict[str, float] | None = None):
@@ -477,6 +493,8 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
         ax1.text(n_required - 0.5, ax1.get_ylim()[1] * 0.95, f' n={n_required}',
                  fontsize=9, color='#9b2335', fontweight='bold', va='top')
 
+    gini = gini_coefficient(df_yr['employment'].values)
+
     total_regions = len(df_yr)
     pct_of_regions = n_required / total_regions * 100 if total_regions else 0
     subtitle = (f'Top {n_required} of {total_regions} regions ({pct_of_regions:.0f}%)'
@@ -487,6 +505,7 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
         top_area = sum(area.get(c, 0) for c in top_codes)
         if total_area > 0:
             subtitle += f', representing {top_area / total_area * 100:.1f}% of the country area'
+    subtitle += f'  ·  Gini = {gini:.3f}'
 
     ax1.set_title(
         f'NUTS-3 Employment Distribution · {cc} ({latest_year})\n{subtitle}',
@@ -1728,6 +1747,9 @@ def main():
         if population:
             regions_per_million = n_regions / (population / 1_000_000)
             summary += f" {regions_per_million:.2f} regions per million residents."
+        df_yr = raw_df[raw_df['year'] == year]
+        gini = gini_coefficient(df_yr['employment'].values)
+        summary += f" Gini = {gini:.3f}."
         print(summary)
 
     output_file = args.output or default_output_path(args.country, args.mode, target_val)
