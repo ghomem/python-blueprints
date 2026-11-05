@@ -1351,7 +1351,8 @@ def _tourism_colors(base_hex, npw_values, norm):
     return hsv_to_rgb(hsv_arr.reshape(n, 1, 3)).reshape(n, 3)
 
 
-def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
+def multivar_fit_multivar(country_data: list, year: int, out_dir: Path,
+                          countries_tag: str = ''):
     """Per-country OLS: effort = a*ln(density) + b*npw + c.
 
     Removes Eurostat fallback regions, fits independently per country,
@@ -1404,7 +1405,8 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
                 'predicted_effort', 'pct_error', 'abs_pct_error']
     result = pool[out_cols].sort_values(['country', 'nuts3'])
 
-    csv_path = out_dir / f"dvp_multivar_fit_{year}.csv"
+    prefix = f"dvp_{countries_tag}_" if countries_tag else "dvp_"
+    csv_path = out_dir / f"{prefix}multivar_fit_{year}.csv"
     result.to_csv(csv_path, index=False, float_format='%.4f')
     print(f"[+] Multivariate fit saved to: {csv_path} ({len(result)} regions)")
 
@@ -1435,10 +1437,11 @@ def multivar_fit_multivar(country_data: list, year: int, out_dir: Path):
         })
 
     if summary:
-        _plot_fit_summary(summary, year, out_dir)
+        _plot_fit_summary(summary, year, out_dir, countries_tag)
 
 
-def _plot_fit_summary(summary: list, year: int, out_dir: Path):
+def _plot_fit_summary(summary: list, year: int, out_dir: Path,
+                      countries_tag: str = ''):
     n_rows = len(summary)
     fig, ax = plt.subplots(figsize=(10, 0.65 + 0.40 * n_rows), dpi=200)
     ax.axis('off')
@@ -1482,7 +1485,8 @@ def _plot_fit_summary(summary: list, year: int, out_dir: Path):
              f"effort = a · ln(job density) + b · tourism nights/worker + c")
     ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
 
-    png_path = out_dir / f"dvp_multivar_fit_summary_{year}.png"
+    prefix = f"dvp_{countries_tag}_" if countries_tag else "dvp_"
+    png_path = out_dir / f"{prefix}multivar_fit_summary_{year}.png"
     fig.savefig(png_path, bbox_inches='tight', pad_inches=0.15)
     plt.close(fig)
     print(f"[+] Fit summary table saved to: {png_path}")
@@ -1589,7 +1593,7 @@ def compute_extra_fit_evidence(country_data: list, year: int,
 
 
 def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
-                             has_tourism: bool):
+                             has_tourism: bool, countries_tag: str = ''):
     """Render the extra-fit-evidence table as a PNG, matching _plot_fit_summary style."""
     n_rows = len(evidence)
 
@@ -1650,14 +1654,15 @@ def _plot_extra_fit_evidence(evidence: list[dict], year: int, out_dir: Path,
     title = (f"Single-Variable Fit Evidence ({year})\n{subtitle}")
     ax.set_title(title, fontsize=15, fontweight='bold', pad=10)
 
-    png_path = out_dir / f"dvp_extra_fit_evidence_{year}.png"
+    prefix = f"dvp_{countries_tag}_" if countries_tag else "dvp_"
+    png_path = out_dir / f"{prefix}extra_fit_evidence_{year}.png"
     fig.savefig(png_path, bbox_inches='tight', pad_inches=0.15)
     plt.close(fig)
     print(f"[+] Extra fit evidence table saved to: {png_path}")
 
 
 def _save_extra_fit_evidence_csv(evidence: list[dict], year: int, out_dir: Path,
-                                 has_tourism: bool):
+                                 has_tourism: bool, countries_tag: str = ''):
     """Save the extra-fit-evidence table as CSV."""
     headers = ['country',
                'density_r2_all', 'density_n_all',
@@ -1666,7 +1671,8 @@ def _save_extra_fit_evidence_csv(evidence: list[dict], year: int, out_dir: Path,
         headers += ['tourism_r2_all', 'tourism_n_all',
                     'tourism_r2_clean', 'tourism_n_clean', 'tourism_n_excluded']
 
-    csv_path = out_dir / f"dvp_extra_fit_evidence_{year}.csv"
+    prefix = f"dvp_{countries_tag}_" if countries_tag else "dvp_"
+    csv_path = out_dir / f"{prefix}extra_fit_evidence_{year}.csv"
     with open(csv_path, 'w', newline='') as f:
         writer = csvmod.writer(f)
         writer.writerow(headers)
@@ -2485,6 +2491,7 @@ def main():
             import traceback
             traceback.print_exc()
 
+    countries_tag = '_'.join(cc for cc, _, _ in country_data)
     summary_rows = []
 
     for metric in metrics:
@@ -2561,7 +2568,7 @@ def main():
             if args.tourism and 'nights_per_worker' in all_df.columns:
                 cols += ['tourist_nights', 'nights_per_worker']
             all_df = all_df[cols].sort_values(['country', 'nuts3'])
-            csv_path = out_dir / f"dvp_{slug}_{year}.csv"
+            csv_path = out_dir / f"dvp_{tag}_{slug}_{year}.csv"
             all_df.to_csv(csv_path, index=False, float_format='%.2f')
             print(f"[+] Dataset saved to: {csv_path} ({len(all_df)} regions)")
 
@@ -2608,22 +2615,24 @@ def main():
 
     if args.fit_multivar and country_data:
         print("\n[*] Per-country multivariate fit:")
-        multivar_fit_multivar(country_data, year, out_dir)
+        multivar_fit_multivar(country_data, year, out_dir, countries_tag)
 
     if args.extra_fit_evidence and country_data:
         print("\n[*] Single-variable fit evidence:")
         evidence = compute_extra_fit_evidence(
             country_data, year, has_tourism=args.tourism)
         _plot_extra_fit_evidence(evidence, year, out_dir,
-                                has_tourism=args.tourism)
+                                has_tourism=args.tourism,
+                                countries_tag=countries_tag)
         _save_extra_fit_evidence_csv(evidence, year, out_dir,
-                                    has_tourism=args.tourism)
+                                    has_tourism=args.tourism,
+                                    countries_tag=countries_tag)
 
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)
         summary_df['r2'] = summary_df['r2'].map(
             lambda v: f'{v:.4f}' if v is not None else '')
-        summary_path = out_dir / f"dvp_summary_{year}.csv"
+        summary_path = out_dir / f"dvp_{countries_tag}_summary_{year}.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"[+] Summary saved to: {summary_path}")
 
@@ -2635,7 +2644,7 @@ def main():
             and len(r['scope']) == 2
         ]
         if effort_by_country:
-            bar_path = str(out_dir / f"dvp_weighted_effort_{year}.png")
+            bar_path = str(out_dir / f"dvp_{countries_tag}_weighted_effort_{year}.png")
             plot_weighted_effort_bar(effort_by_country, year, bar_path)
 
         unaff_by_country = []
@@ -2648,7 +2657,7 @@ def main():
                 n_over = int(over.sum())
                 unaff_by_country.append((cc, pct, n_over, len(cdf)))
         if unaff_by_country:
-            bar_path = str(out_dir / f"dvp_unaffordable_mortgage_{year}.png")
+            bar_path = str(out_dir / f"dvp_{countries_tag}_unaffordable_mortgage_{year}.png")
             plot_unaffordable_bar(unaff_by_country, year, bar_path)
 
         countries_used = [cc for cc, _, _ in country_data]
@@ -2659,7 +2668,7 @@ def main():
                     'country': cc, 'data_type': dtype,
                     'source': desc, 'url': url,
                 })
-        sources_path = out_dir / "dvp_data_sources.csv"
+        sources_path = out_dir / f"dvp_{countries_tag}_data_sources.csv"
         pd.DataFrame(source_rows).to_csv(sources_path, index=False)
         print(f"[+] Data sources saved to: {sources_path}")
 
