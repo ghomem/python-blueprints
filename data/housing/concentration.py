@@ -477,7 +477,10 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
         ax1.text(n_required - 0.5, ax1.get_ylim()[1] * 0.95, f' n={n_required}',
                  fontsize=9, color='#9b2335', fontweight='bold', va='top')
 
-    subtitle = f'Top {n_required} regions (red) reach {target_pct}% of national employment'
+    total_regions = len(df_yr)
+    pct_of_regions = n_required / total_regions * 100 if total_regions else 0
+    subtitle = (f'Top {n_required} of {total_regions} regions ({pct_of_regions:.0f}%)'
+                f' reach {target_pct}% of national employment')
     if area:
         total_area = sum(area.values())
         top_codes = df_yr.head(n_required)['region_code']
