@@ -1635,7 +1635,7 @@ def main():
 
         out_dir = Path(tempfile.gettempdir()) / "concentration"
         csv_path = out_dir / f"concentration_share_delta_{args.compare_year}_{args.year}.csv"
-        df.to_csv(csv_path, index=False, float_format='%.4f')
+        df.sort_values(['country', 'nuts3']).to_csv(csv_path, index=False, float_format='%.4f')
         print(f"[+] CSV exported to: {csv_path}")
         return
 
