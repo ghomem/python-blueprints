@@ -140,6 +140,7 @@ _MAP_CMAP: str | None = None    # set by --map-cmap
 _MAP_GAMMA: float | None = None # set by --map-gamma
 _MAP_VCENTER: float | None = None # set by --map-vcenter
 _NO_MAP_LABELS: bool = False      # set by --no-map-labels
+_MAP_VALUES: bool = False         # set by --map-values
 _MERGE_PARIS: bool = False        # set by --merge-paris
 
 from paris_merge import PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME
@@ -2200,7 +2201,7 @@ def plot_density_map(df: pd.DataFrame, country: str, year: int,
         gamma=_MAP_GAMMA or 0.4,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
-        label_regions=not _NO_MAP_LABELS,
+        label_mode=None if _NO_MAP_LABELS else ('value' if _MAP_VALUES else 'name'),
         label_fontsize_override={'FR': 5, 'ES': 5},
     )
 
@@ -2233,7 +2234,7 @@ def plot_map(df: pd.DataFrame, country: str, year: int, output_file: str,
         gamma=_MAP_GAMMA,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
-        label_regions=not _NO_MAP_LABELS,
+        label_mode=None if _NO_MAP_LABELS else ('value' if _MAP_VALUES else 'name'),
         label_fontsize_override={'FR': 5, 'ES': 5},
         text_color_fn=_effort_text_color,
     )
@@ -2270,7 +2271,7 @@ def plot_joined_map(data_dfs: list[tuple[str, pd.DataFrame]], year: int,
         gamma=_MAP_GAMMA,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
-        label_regions=not _NO_MAP_LABELS,
+        label_mode=None if _NO_MAP_LABELS else ('value' if _MAP_VALUES else 'name'),
         label_fontsize=4,
         text_color_fn=_effort_text_color,
         brand=brand,
@@ -2305,7 +2306,7 @@ def plot_joined_density_map(data_dfs: list[tuple[str, pd.DataFrame]],
         gamma=_MAP_GAMMA or 0.4,
         cmap_spec=_MAP_CMAP or 'YlOrRd',
         bg_color=_BG_COLOR,
-        label_regions=not _NO_MAP_LABELS,
+        label_mode=None if _NO_MAP_LABELS else ('value' if _MAP_VALUES else 'name'),
         label_fontsize=4,
         brand=brand,
     )
@@ -2375,6 +2376,9 @@ def main():
     parser.add_argument('--no-map-labels', action='store_true',
                         help='Hide region text labels from choropleth maps '
                              '(effort and density). Keeps colorbar, title, and axes.')
+    parser.add_argument('--map-values', action='store_true',
+                        help='Show numeric values instead of region names on '
+                             'choropleth maps. Overridden by --no-map-labels.')
     parser.add_argument('--extra-fit-evidence', action='store_true',
                         help='Produce a summary table (PNG+CSV) of R² for single-variable '
                              'fits per country: density-only and (if --tourism) tourism-only, '
@@ -2429,6 +2433,10 @@ def main():
     if args.no_map_labels:
         global _NO_MAP_LABELS
         _NO_MAP_LABELS = True
+
+    if args.map_values:
+        global _MAP_VALUES
+        _MAP_VALUES = True
 
     if args.merge_paris:
         global _MERGE_PARIS

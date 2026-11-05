@@ -29,6 +29,8 @@ SAVE_MODE: bool = False
 _BG_COLOR: str | None = None
 _BAR_COLOR: str | None = None
 _BAR_COLOR_NEG: str | None = None
+_NO_MAP_LABELS: bool = False
+_MAP_VALUES: bool = False
 
 
 def _apply_bg():
@@ -446,7 +448,7 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
 
     fig, ax1 = plt.subplots(figsize=(14, 6), dpi=300)
 
-    colors = ['#d95f02' if i < n_required else '#a0a0a0' for i in range(len(df_yr))]
+    colors = ['#9b2335' if i < n_required else '#a0a0a0' for i in range(len(df_yr))]
     max_label = 28
     labels = [row['region_name'][:max_label] for _, row in df_yr.iterrows()]
 
@@ -457,21 +459,21 @@ def plot_distribution(raw_df: pd.DataFrame, country_code: str, target_pct: float
     ax1.set_xticklabels(labels, rotation=90, fontsize=7)
 
     ax2 = ax1.twinx()
-    ax2.plot(range(len(df_yr)), df_yr['cum_share'], color='#1f77b4',
+    ax2.plot(range(len(df_yr)), df_yr['cum_share'], color='#0051b5',
              linewidth=2, marker='.', markersize=4)
-    ax2.set_ylabel('Cumulative Share (%)', fontsize=11, labelpad=10, color='#1f77b4')
-    ax2.tick_params(axis='y', labelcolor='#1f77b4')
+    ax2.set_ylabel('Cumulative Share (%)', fontsize=11, labelpad=10, color='#0051b5')
+    ax2.tick_params(axis='y', labelcolor='#0051b5')
 
-    ax2.axhline(y=target_pct, color='#1f77b4', linestyle='--', linewidth=1, alpha=0.7)
+    ax2.axhline(y=target_pct, color='#0051b5', linestyle='--', linewidth=1, alpha=0.7)
     ax2.text(len(df_yr) - 1, target_pct + 1.5, f'{target_pct}% target',
-             ha='right', fontsize=9, color='#1f77b4', fontstyle='italic')
+             ha='right', fontsize=9, color='#0051b5', fontstyle='italic')
 
     if n_required > 0 and n_required < len(df_yr):
-        ax1.axvline(x=n_required - 0.5, color='#d95f02', linestyle='--', linewidth=1, alpha=0.7)
+        ax1.axvline(x=n_required - 0.5, color='#9b2335', linestyle='--', linewidth=1, alpha=0.7)
         ax1.text(n_required - 0.5, ax1.get_ylim()[1] * 0.95, f' n={n_required}',
-                 fontsize=9, color='#d95f02', fontweight='bold', va='top')
+                 fontsize=9, color='#9b2335', fontweight='bold', va='top')
 
-    subtitle = f'Top {n_required} regions (orange) reach {target_pct}% of national employment'
+    subtitle = f'Top {n_required} regions (red) reach {target_pct}% of national employment'
     if area:
         total_area = sum(area.values())
         top_codes = df_yr.head(n_required)['region_code']
@@ -1131,7 +1133,8 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
                           metrics: list[str] | None = None,
                           cmap_spec: str = '#2166ac,#ffffff,#b2182b',
                           gamma: float = 0.4,
-                          merge_paris: bool = False):
+                          merge_paris: bool = False,
+                          label_mode: str | None = 'name'):
     """Choropleth maps of employment change per NUTS-3 region."""
     from map_utils import fetch_nuts3_geometry, plot_choropleth
     from paris_merge import merge_paris_geometry
@@ -1185,6 +1188,7 @@ def plot_share_delta_maps(df: pd.DataFrame, countries: list[str],
                 gamma=gamma,
                 cmap_spec=cmap_spec,
                 bg_color=_BG_COLOR,
+                label_mode=label_mode,
                 label_fontsize_override={'FR': 5, 'ES': 5},
                 text_color_fn=_text_color,
             )
@@ -1489,6 +1493,8 @@ def main():
     target_parser.add_argument("country", type=str, help="2-letter EU country code")
     target_parser.add_argument("pct", type=float, help="Target employment share (e.g. 40 for 40%%)")
     target_parser.add_argument("-o", "--output", type=str, default=None)
+    target_parser.add_argument("--year", type=int, default=None,
+                               help="Reference year (default: latest available)")
 
     eu_parser = subparsers.add_parser("eu", help="Compare all EU-27 countries")
     eu_parser.add_argument("pct", type=float, help="Target employment share (e.g. 50 for 50%%)")
@@ -1532,6 +1538,11 @@ def main():
                              help="Comma-separated metrics: share_delta, emp_change (default: both)")
     smap_parser.add_argument("--merge-paris", action="store_true",
                              help="Merge FR101+FR105+FR106+FR107 into Paris + Petite Couronne")
+    smap_parser.add_argument("--no-map-labels", action="store_true",
+                             help="Hide region text labels from choropleth maps")
+    smap_parser.add_argument("--map-values", action="store_true",
+                             help="Show numeric values instead of region names on maps. "
+                                  "Overridden by --no-map-labels.")
 
     sscat_parser = subparsers.add_parser("share-scatter",
                                          help="Scatter: job share vs share change")
@@ -1633,6 +1644,14 @@ def main():
         return
 
     if args.mode == 'share-map':
+        if args.no_map_labels:
+            global _NO_MAP_LABELS
+            _NO_MAP_LABELS = True
+        if args.map_values:
+            global _MAP_VALUES
+            _MAP_VALUES = True
+        lm = None if _NO_MAP_LABELS else ('value' if _MAP_VALUES else 'name')
+
         countries = [c.strip().upper() for c in args.countries.split(',')]
         df = share_delta_analysis(countries, year=args.year,
                                   compare_year=args.compare_year,
@@ -1648,7 +1667,8 @@ def main():
                               metrics=metrics,
                               cmap_spec=args.map_cmap,
                               gamma=args.map_gamma,
-                              merge_paris=args.merge_paris)
+                              merge_paris=args.merge_paris,
+                              label_mode=lm)
 
         out_dir = Path(tempfile.gettempdir()) / "concentration"
         csv_path = out_dir / f"concentration_share_delta_{args.compare_year}_{args.year}.csv"
@@ -1709,6 +1729,9 @@ def main():
     if raw_df.empty:
         print("[-] Error: No data retrieved.", file=sys.stderr)
         sys.exit(1)
+
+    if hasattr(args, 'year') and args.year is not None:
+        raw_df = raw_df[raw_df['year'] <= args.year]
 
     area = fetch_area_data(args.country)
 

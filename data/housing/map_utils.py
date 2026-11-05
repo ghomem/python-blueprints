@@ -93,7 +93,7 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
                     norm=None,
                     cmap_spec: str = 'YlOrRd',
                     bg_color: str | None = None,
-                    label_regions: bool = True,
+                    label_mode: str | None = 'name',
                     label_fontsize_override: dict[str, int] | None = None,
                     text_color_fn=None,
                     figsize: tuple = (10, 10)):
@@ -213,23 +213,28 @@ def plot_choropleth(gdf, data_df, country: str, value_col: str,
         cbar = fig.colorbar(sm, cax=cax)
         cbar.set_label(colorbar_label, fontsize=10)
 
-    # Region name labels at centroids
-    if label_regions:
+    # Region labels at centroids
+    if label_mode:
         fontsize_map = label_fontsize_override or {}
         default_fs = fontsize_map.get(cc, 6)
         for _, row in merged.iterrows():
             if row.geometry is None:
                 continue
             c = row.geometry.centroid
-            name = row.get('NAME_LATN', '')
-            if not name:
-                continue
             val = row.get(value_col, None)
+            if label_mode == 'value':
+                if val is None:
+                    continue
+                label_text = f'{val:.2f}' if abs(val) < 1 else f'{val:.1f}' if abs(val) < 10 else f'{val:.0f}'
+            else:
+                label_text = row.get('NAME_LATN', '')
+                if not label_text:
+                    continue
             if text_color_fn and val is not None:
                 txt_color = text_color_fn(val)
             else:
                 txt_color = '#333333'
-            ax.text(c.x, c.y, name, fontsize=default_fs, ha='center',
+            ax.text(c.x, c.y, label_text, fontsize=default_fs, ha='center',
                     va='center', color=txt_color, fontweight='medium')
 
     ax.set_title(title, fontsize=14, fontweight='bold')
@@ -252,7 +257,7 @@ def plot_joined_choropleth(gdf, data_dfs: list[tuple[str, 'pd.DataFrame']],
                            norm=None,
                            cmap_spec: str = 'YlOrRd',
                            bg_color: str | None = None,
-                           label_regions: bool = True,
+                           label_mode: str | None = 'name',
                            label_fontsize: int = 4,
                            text_color_fn=None,
                            brand: str | None = None,
@@ -391,21 +396,26 @@ def plot_joined_choropleth(gdf, data_dfs: list[tuple[str, 'pd.DataFrame']],
         cbar = fig.colorbar(sm, cax=cax)
         cbar.set_label(colorbar_label, fontsize=10)
 
-    # Region name labels at centroids
-    if label_regions:
+    # Region labels at centroids
+    if label_mode:
         for _, row in merged.iterrows():
             if row.geometry is None:
                 continue
             c = row.geometry.centroid
-            name = row.get('NAME_LATN', '')
-            if not name:
-                continue
             val = row.get(value_col, None)
+            if label_mode == 'value':
+                if val is None:
+                    continue
+                label_text = f'{val:.2f}' if abs(val) < 1 else f'{val:.1f}' if abs(val) < 10 else f'{val:.0f}'
+            else:
+                label_text = row.get('NAME_LATN', '')
+                if not label_text:
+                    continue
             if text_color_fn and val is not None:
                 txt_color = text_color_fn(val)
             else:
                 txt_color = '#333333'
-            ax.text(c.x, c.y, name, fontsize=label_fontsize, ha='center',
+            ax.text(c.x, c.y, label_text, fontsize=label_fontsize, ha='center',
                     va='center', color=txt_color, fontweight='medium')
 
     ax.set_title(title, fontsize=14, fontweight='bold')
