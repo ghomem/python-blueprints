@@ -5,7 +5,7 @@ Miscellaneous Housing Charts
 Contextual/framing charts that don't belong in the main analysis scripts.
 
 Subcommands:
-    expenditure     Household expenditure breakdown by COICOP category.
+    expenditure     Housing cost burden by country (EU-SILC).
 
 """
 
@@ -35,21 +35,6 @@ def _apply_bg():
             'legend.edgecolor': _BG_COLOR,
         })
 
-COICOP_TOP = [
-    ('CP01', 'Food'),
-    ('CP02', 'Alcohol & tobacco'),
-    ('CP03', 'Clothing'),
-    ('CP04', 'Housing & energy'),
-    ('CP05', 'Furnishings'),
-    ('CP06', 'Health'),
-    ('CP07', 'Transport'),
-    ('CP08', 'Communications'),
-    ('CP09', 'Recreation'),
-    ('CP10', 'Education'),
-    ('CP11', 'Restaurants & hotels'),
-    ('CP12', 'Miscellaneous'),
-]
-
 
 def _save_csv(df: pd.DataFrame, name: str):
     if SAVE_MODE and INPUT_DIR and not df.empty:
@@ -69,21 +54,19 @@ def _load_csv(name: str) -> pd.DataFrame | None:
 
 
 def fetch_expenditure(countries: list[str], year: int) -> pd.DataFrame:
-    """Fetch household expenditure shares from Eurostat HBS (hbs_str_t211)."""
-    csv_name = f"others_expenditure_{year}.csv"
+    """Fetch housing cost burden from EU-SILC (ilc_mded01)."""
+    csv_name = f"others_housing_cost_burden_{year}.csv"
     cached = _load_csv(csv_name)
     if cached is not None:
         return cached[(cached['geo'].isin(countries)) & (cached['year'] == year)].reset_index(drop=True)
 
-    codes = [c for c, _ in COICOP_TOP]
-    coicop_param = '+'.join(codes)
     geo_param = '+'.join(countries)
     url = (
         'https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/'
-        f'hbs_str_t211/A.{coicop_param}.PM.{geo_param}'
-        f'?format=JSON&lang=en'
+        f'ilc_mded01/A.TOTAL.TOTAL.PC.{geo_param}'
+        '?format=JSON&lang=en'
     )
-    print(f"  Fetching Eurostat HBS data...")
+    print(f"  Fetching Eurostat EU-SILC housing cost burden...")
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     data = r.json()
@@ -95,26 +78,21 @@ def fetch_expenditure(countries: list[str], year: int) -> pd.DataFrame:
         cats = dims[dim]['category']
         return {pos: code for code, pos in cats['index'].items()}
 
-    coicop_idx = idx_map('coicop')
     geo_idx = idx_map('geo')
     time_idx = idx_map('time')
 
     rows = []
     for flat_str, val in data['value'].items():
         flat = int(flat_str)
-        t = flat % size[4]; rest = flat // size[4]
-        g = rest % size[3]; rest = rest // size[3]
-        _u = rest % size[2]; rest = rest // size[2]
-        c = rest % size[1]
+        t = flat % size[5]; rest = flat // size[5]
+        g = rest % size[4]
         time_code = time_idx.get(t)
         geo_code = geo_idx.get(g)
-        coicop_code = coicop_idx.get(c)
-        if time_code and geo_code and coicop_code and coicop_code in codes:
+        if time_code and geo_code:
             rows.append({
                 'geo': geo_code,
                 'year': int(time_code),
-                'coicop': coicop_code,
-                'pct': val / 10,
+                'pct': val,
             })
 
     df = pd.DataFrame(rows)
@@ -122,15 +100,14 @@ def fetch_expenditure(countries: list[str], year: int) -> pd.DataFrame:
     df = df[df['year'] == year].reset_index(drop=True)
     if df.empty:
         available = sorted(pd.DataFrame(rows)['year'].unique())
-        print(f"  [!] No data for {year}. Available waves: {available}")
+        print(f"  [!] No data for {year}. Available years: {available}")
     return df
 
 
 def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
                      output_file: str):
-    """Vertical bar chart: housing & energy share per country, sorted."""
-    housing = df[df['coicop'] == 'CP04'].copy()
-    housing = housing.set_index('geo').reindex(countries).dropna(subset=['pct'])
+    """Vertical bar chart: housing cost burden per country, sorted."""
+    housing = df.set_index('geo').reindex(countries).dropna(subset=['pct'])
     housing = housing.sort_values('pct')
 
     codes = housing.index.tolist()
@@ -145,12 +122,12 @@ def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
     bars = ax.bar(codes, pcts, color=bar_color, edgecolor='white',
                   linewidth=0.8, width=0.6)
     for bar, pct in zip(bars, pcts):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                f'{pct:.0f}%', ha='center', va='bottom', fontsize=11,
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.3,
+                f'{pct:.1f}%', ha='center', va='bottom', fontsize=11,
                 fontweight='bold')
 
-    ax.set_ylabel('% of household expenditure', fontsize=11, labelpad=10)
-    ax.set_title(f'Housing & Energy Share of Household Expenditure ({year})',
+    ax.set_ylabel('% of disposable income', fontsize=11, labelpad=10)
+    ax.set_title(f'Housing Cost Burden ({year})',
                  fontsize=13, fontweight='bold', pad=12)
     ax.set_ylim(0, min(100, max(pcts) * 1.15))
     ax.tick_params(axis='x', labelsize=12)
@@ -158,7 +135,7 @@ def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
     fig.tight_layout()
     plt.savefig(output_file, dpi=300)
     plt.close(fig)
-    print(f"[+] Expenditure chart saved to: {output_file}")
+    print(f"[+] Housing cost burden chart saved to: {output_file}")
 
 
 def cmd_expenditure(args):
@@ -173,10 +150,10 @@ def cmd_expenditure(args):
         print("[!] No data — cannot produce chart.", file=sys.stderr)
         sys.exit(1)
 
-    png_path = str(out_dir / f"others_expenditure_{year}.png")
+    png_path = str(out_dir / f"others_housing_cost_burden_{year}.png")
     plot_expenditure(df, countries, year, png_path)
 
-    csv_path = out_dir / f"others_expenditure_{year}.csv"
+    csv_path = out_dir / f"others_housing_cost_burden_{year}.csv"
     df.to_csv(csv_path, index=False, float_format='%.1f')
     print(f"[+] CSV saved to: {csv_path}")
 
@@ -188,11 +165,11 @@ def main():
                         help='Background color for all plots (e.g. "#f5f0e8")')
     sub = parser.add_subparsers(dest='command')
 
-    exp = sub.add_parser('expenditure', help='Household expenditure breakdown')
+    exp = sub.add_parser('expenditure', help='Housing cost burden (EU-SILC)')
     exp.add_argument('--countries', type=str, default='ES,PT,FR,IT,NL',
                      help='Comma-separated country codes (default: ES,PT,FR,IT,NL)')
-    exp.add_argument('--year', type=int, default=2020,
-                     help='HBS survey wave year (default: 2020)')
+    exp.add_argument('--year', type=int, default=2023,
+                     help='Reference year (default: 2023)')
     exp.add_argument('--output-dir', type=str, default='/tmp/density_vs_price',
                      help='Output directory')
     exp.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
