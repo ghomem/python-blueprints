@@ -55,7 +55,7 @@ def _load_csv(name: str) -> pd.DataFrame | None:
 
 def fetch_expenditure(countries: list[str], year: int) -> pd.DataFrame:
     """Fetch housing cost burden from EU-SILC (ilc_mded01)."""
-    csv_name = f"others_housing_cost_burden_{year}.csv"
+    csv_name = "others_housing_cost_burden.csv"
     cached = _load_csv(csv_name)
     if cached is not None:
         return cached[(cached['geo'].isin(countries)) & (cached['year'] == year)].reset_index(drop=True)
