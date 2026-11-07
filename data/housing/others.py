@@ -6,6 +6,7 @@ Contextual/framing charts that don't belong in the main analysis scripts.
 
 Subcommands:
     expenditure     Housing cost burden by country (EU-SILC).
+    burden          Subjective housing burden by country (EU-SILC).
 
 """
 
@@ -52,6 +53,8 @@ def _load_csv(name: str) -> pd.DataFrame | None:
         return pd.read_csv(path)
     return None
 
+
+# ── Housing cost burden (ilc_mded01) ────────────────────────────────────────
 
 def fetch_expenditure(countries: list[str], year: int) -> pd.DataFrame:
     """Fetch housing cost burden from EU-SILC (ilc_mded01)."""
@@ -127,7 +130,7 @@ def plot_expenditure(df: pd.DataFrame, countries: list[str], year: int,
                 fontweight='bold')
 
     ax.set_ylabel('% of disposable income', fontsize=11, labelpad=10)
-    ax.set_title(f'Housing Cost Burden ({year})',
+    ax.set_title(f'Share of Housing Costs in Disposable Income ({year})',
                  fontsize=13, fontweight='bold', pad=12)
     ax.set_ylim(0, min(100, max(pcts) * 1.15))
     ax.tick_params(axis='x', labelsize=12)
@@ -158,6 +161,129 @@ def cmd_expenditure(args):
     print(f"[+] CSV saved to: {csv_path}")
 
 
+# ── Subjective housing burden (ilc_mded04) ──────────────────────────────────
+
+def fetch_burden(countries: list[str], year: int) -> pd.DataFrame:
+    """Fetch subjective housing burden from EU-SILC (ilc_mded04)."""
+    csv_name = "others_housing_burden_subjective.csv"
+    cached = _load_csv(csv_name)
+    if cached is not None:
+        return cached[(cached['geo'].isin(countries)) & (cached['year'] == year)].reset_index(drop=True)
+
+    geo_param = '+'.join(countries)
+    url = (
+        'https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/'
+        f'ilc_mded04/A.TOTAL.TOTAL..PC.{geo_param}'
+        '?format=JSON&lang=en'
+    )
+    print(f"  Fetching Eurostat EU-SILC subjective housing burden...")
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    data = r.json()
+
+    dims = data['dimension']
+    size = data['size']
+
+    def idx_map(dim):
+        cats = dims[dim]['category']
+        return {pos: code for code, pos in cats['index'].items()}
+
+    bur_idx = idx_map('lev_bur')
+    geo_idx = idx_map('geo')
+    time_idx = idx_map('time')
+
+    rows = []
+    for flat_str, val in data['value'].items():
+        flat = int(flat_str)
+        indices = []
+        for s in reversed(size):
+            indices.append(flat % s)
+            flat //= s
+        indices.reverse()
+
+        dim_names = list(dims.keys())
+        bur_pos = dim_names.index('lev_bur')
+        geo_pos = dim_names.index('geo')
+        time_pos = dim_names.index('time')
+
+        bur_code = bur_idx.get(indices[bur_pos])
+        geo_code = geo_idx.get(indices[geo_pos])
+        time_code = time_idx.get(indices[time_pos])
+
+        if time_code and geo_code and bur_code:
+            rows.append({
+                'geo': geo_code,
+                'year': int(time_code),
+                'burden': bur_code,
+                'pct': val,
+            })
+
+    df = pd.DataFrame(rows)
+    _save_csv(df, csv_name)
+    df = df[df['year'] == year].reset_index(drop=True)
+    if df.empty:
+        available = sorted(pd.DataFrame(rows)['year'].unique())
+        print(f"  [!] No data for {year}. Available years: {available}")
+    return df
+
+
+def plot_burden(df: pd.DataFrame, countries: list[str], year: int,
+                output_file: str):
+    """Vertical bar chart: % of population reporting heavy housing burden."""
+    heavy = df[df['burden'] == 'HVY'].copy()
+    heavy = heavy.set_index('geo').reindex(countries).dropna(subset=['pct'])
+    heavy = heavy.sort_values('pct')
+
+    codes = heavy.index.tolist()
+    pcts = heavy['pct'].tolist()
+    bar_color = '#9b2335'
+
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    _apply_bg()
+    fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(codes)), 5), dpi=300)
+
+    bars = ax.bar(codes, pcts, color=bar_color, edgecolor='white',
+                  linewidth=0.8, width=0.6)
+    for bar, pct in zip(bars, pcts):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+                f'{pct:.1f}%', ha='center', va='bottom', fontsize=11,
+                fontweight='bold')
+
+    ax.set_ylabel('% of population', fontsize=11, labelpad=10)
+    ax.set_title(f'Financial Burden of the Total Housing Cost · Heavy ({year})',
+                 fontsize=13, fontweight='bold', pad=12)
+    ax.set_ylim(0, min(100, max(pcts) * 1.15))
+    ax.tick_params(axis='x', labelsize=12)
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] Subjective burden chart saved to: {output_file}")
+
+
+def cmd_burden(args):
+    """Handle the 'burden' subcommand."""
+    countries = [c.strip().upper() for c in args.countries.split(',')]
+    year = args.year
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df = fetch_burden(countries, year)
+    if df.empty:
+        print("[!] No data — cannot produce chart.", file=sys.stderr)
+        sys.exit(1)
+
+    png_path = str(out_dir / f"others_housing_burden_subjective_{year}.png")
+    plot_burden(df, countries, year, png_path)
+
+    csv_path = out_dir / f"others_housing_burden_subjective_{year}.csv"
+    df.to_csv(csv_path, index=False, float_format='%.1f')
+    print(f"[+] CSV saved to: {csv_path}")
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+
 def main():
     parser = argparse.ArgumentParser(
         description="Miscellaneous housing-related charts")
@@ -165,17 +291,19 @@ def main():
                         help='Background color for all plots (e.g. "#f5f0e8")')
     sub = parser.add_subparsers(dest='command')
 
-    exp = sub.add_parser('expenditure', help='Housing cost burden (EU-SILC)')
-    exp.add_argument('--countries', type=str, default='ES,PT,FR,IT,NL',
-                     help='Comma-separated country codes (default: ES,PT,FR,IT,NL)')
-    exp.add_argument('--year', type=int, default=2023,
-                     help='Reference year (default: 2023)')
-    exp.add_argument('--output-dir', type=str, default='/tmp/density_vs_price',
-                     help='Output directory')
-    exp.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
-                     help='Download and save raw data to DIR (default: input/)')
-    exp.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
-                     help='Use previously saved data from DIR')
+    for name, help_text in [('expenditure', 'Housing cost burden (EU-SILC)'),
+                            ('burden', 'Subjective housing burden (EU-SILC)')]:
+        sp = sub.add_parser(name, help=help_text)
+        sp.add_argument('--countries', type=str, default='ES,PT,FR,IT,NL',
+                        help='Comma-separated country codes (default: ES,PT,FR,IT,NL)')
+        sp.add_argument('--year', type=int, default=2023,
+                        help='Reference year (default: 2023)')
+        sp.add_argument('--output-dir', type=str, default='/tmp/density_vs_price',
+                        help='Output directory')
+        sp.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
+                        help='Download and save raw data to DIR (default: input/)')
+        sp.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
+                        help='Use previously saved data from DIR')
 
     args = parser.parse_args()
     if not args.command:
@@ -201,6 +329,8 @@ def main():
 
     if args.command == 'expenditure':
         cmd_expenditure(args)
+    elif args.command == 'burden':
+        cmd_burden(args)
 
 
 if __name__ == "__main__":
