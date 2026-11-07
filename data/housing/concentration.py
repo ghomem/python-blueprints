@@ -181,6 +181,41 @@ def fetch_population(country_code: str, year: int) -> int | None:
     return None
 
 
+def get_country_employment(country_code: str) -> pd.DataFrame:
+    """Get single-country employment DataFrame, preferring local data.
+
+    Returns DataFrame with columns: region_code, region_name, year, employment.
+    Same format as fetch_eurostat_data().
+    """
+    cc = country_code.upper()
+    cached = _load_csv("nama_10r_3empers.csv")
+    if cached is not None:
+        df = cached[cached['country'] == cc][['region_code', 'region_name', 'year', 'employment']].copy()
+        if not df.empty:
+            total_regions = df['region_code'].nunique()
+            regions_per_year = df.groupby('year')['region_code'].nunique()
+            complete_years = regions_per_year[regions_per_year >= total_regions * 0.5].index
+            dropped = set(df['year'].unique()) - set(complete_years)
+            if dropped:
+                print(f"[!] Dropping years with incomplete data: {sorted(dropped)}")
+            return df[df['year'].isin(complete_years)].reset_index(drop=True)
+        return df
+    return fetch_eurostat_data(cc)
+
+
+def get_country_area(country_code: str) -> dict[str, float]:
+    """Get single-country area dict, preferring local data.
+
+    Returns {nuts3_code: area_km2}. Same format as fetch_area_data().
+    """
+    cc = country_code.upper()
+    cached = _load_csv("reg_area3.csv")
+    if cached is not None:
+        subset = cached[cached['country'] == cc]
+        return dict(zip(subset['region_code'], subset['area_km2']))
+    return fetch_area_data(cc)
+
+
 def fetch_area_data(country_code: str) -> dict[str, float]:
     """Fetches NUTS-3 land area (km²) from Eurostat reg_area3. Returns {nuts3: km²}."""
     url = "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/reg_area3"
@@ -1573,7 +1608,7 @@ def main():
         print(f"[*] Using local data from {INPUT_DIR}/")
 
     if args.mode == 'list-regions':
-        raw_df = fetch_eurostat_data(args.country)
+        raw_df = get_country_employment(args.country)
         if raw_df.empty:
             print("[-] No data", file=sys.stderr)
             sys.exit(1)
@@ -1698,7 +1733,7 @@ def main():
 
     if args.mode == 'region':
         cc = args.nuts3[:2].upper()
-        raw_df = fetch_eurostat_data(cc)
+        raw_df = get_country_employment(cc)
         if raw_df.empty:
             print(f"[-] No data for country {cc}", file=sys.stderr)
             sys.exit(1)
@@ -1707,7 +1742,7 @@ def main():
         plot_region_timeseries(raw_df, args.nuts3, output_file)
         return
 
-    raw_df = fetch_eurostat_data(args.country)
+    raw_df = get_country_employment(args.country)
     if raw_df.empty:
         print("[-] Error: No data retrieved.", file=sys.stderr)
         sys.exit(1)
@@ -1721,7 +1756,7 @@ def main():
     # reg_area3 may contain codes from a newer NUTS revision than nama_10r_3empers
     # (e.g. PT16B-PT16J from NUTS 2024 vs PT1C1-PT1D3 in employment data).
     # Filter to codes present in both so the area percentage is consistent.
-    area_all = fetch_area_data(args.country)
+    area_all = get_country_area(args.country)
     emp_codes = set(raw_df['region_code'].unique())
     area = {k: v for k, v in area_all.items() if k in emp_codes}
 
