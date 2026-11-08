@@ -380,7 +380,7 @@ def plot_oecd_burden(df: pd.DataFrame, countries: list[str],
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
                   in plt.style.available else 'default')
     _apply_bg()
-    fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(codes)), 5), dpi=300)
+    fig, ax = plt.subplots(figsize=(max(4, 1.5 * len(codes)), 6), dpi=300)
 
     bars = ax.bar(codes, pcts, color=bar_color, edgecolor='white',
                   linewidth=0.8, width=0.6)
@@ -394,7 +394,7 @@ def plot_oecd_burden(df: pd.DataFrame, countries: list[str],
                  y=0.98)
     ax.set_title(f'OECD HC1.2 · {len(avg_years)}-year average ({yr_label})',
                  fontsize=10, pad=8)
-    ax.set_ylim(0, min(100, max(pcts) * 1.15))
+    ax.set_ylim(0, min(100, max(pcts) * 1.35))
     ax.tick_params(axis='x', labelsize=12)
 
     source = ('OECD Affordable Housing Database, indicator HC 1.2\n'
