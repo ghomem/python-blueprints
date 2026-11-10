@@ -20,6 +20,7 @@ MAINLAND_BBOX = {
     'FR': (-5.3, 41.2, 9.7, 51.2),
     'IT': (6.5, 36.5, 18.7, 47.2),
     'NL': (3.2, 50.6, 7.4, 53.7),
+    'DE': (5.8, 47.2, 15.1, 55.1),
 }
 
 # Ultra-peripheral regions to exclude from joined maps (NUTS-3 prefixes)
