@@ -698,6 +698,9 @@ def fetch_wages(country: str) -> pd.DataFrame:
             _save_df(df, country, 'wages')
             return _apply_nl_wage_correction(df)
 
+    if country.upper() == 'DE':
+        return _load_local_only('DE', 'wages')
+
     df = _fetch_wages_eurostat(country)
     _save_df(df, country, 'wages')
     return df
@@ -1063,18 +1066,32 @@ def fetch_nl_prices() -> pd.DataFrame:
 # github.com/eugeniodalpozzo/italy_omi_housing_provincial_prices.
 # Requires --local-data with input/IT_prices.csv pre-populated.
 
-LOCAL_ONLY_COUNTRIES = {'IT'}
+LOCAL_ONLY_COUNTRIES = {'IT', 'DE'}
+
+
+def _load_local_only(country: str, kind: str) -> pd.DataFrame:
+    """Load a local-only CSV, working in both --local-data and --save-data modes."""
+    local = _load_df(country, kind)
+    if local is not None:
+        return local
+    if SAVE_MODE and INPUT_DIR:
+        path = _local_path(country, kind)
+        if path.exists():
+            df = pd.read_csv(path)
+            print(f"  [local-only] {country} {kind}: no public API, "
+                  f"reading pre-prepared {path.name} ({len(df)} rows)")
+            return df
+    raise SystemExit(
+        f"{country} requires --local-data with {country}_{kind}.csv prepared."
+    )
 
 
 def fetch_it_prices() -> pd.DataFrame:
-    """Load Italian OMI housing prices from local CSV."""
-    local = _load_df('IT', 'prices')
-    if local is not None:
-        return local
-    raise SystemExit(
-        "IT requires --local-data: no public API for OMI prices.\n"
-        "Run with --local-data <dir> where <dir>/IT_prices.csv exists."
-    )
+    return _load_local_only('IT', 'prices')
+
+
+def fetch_de_prices() -> pd.DataFrame:
+    return _load_local_only('DE', 'prices')
 
 
 # ---------------------------------------------------------------------------
@@ -2292,10 +2309,14 @@ def main():
                         help='Y-axis metric: "effort" = months of gross salary / m² '
                              '(default), "price" = raw € / m², "all" = both')
     parser.add_argument('--save-data', metavar='DIR', nargs='?', const='input',
-                        help='Save fetched data as CSVs into DIR (default: input/)')
+                        help='Save fetched data as CSVs into DIR (default: input/). '
+                             'Local-only countries (DE, IT) have no public API for '
+                             'prices/wages — those are read from pre-prepared CSVs '
+                             'in DIR; only employment and area are re-fetched.')
     parser.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
                         help='Load data from local CSVs in DIR instead of fetching '
-                             '(default: input/)')
+                             '(default: input/). Required for local-only countries '
+                             '(DE, IT) whose prices/wages have no public API.')
     outlier_grp = parser.add_mutually_exclusive_group()
     outlier_grp.add_argument('--highlight-outliers', action='store_true',
                              help='Highlight outliers (red diamond) and exclude from fit')
@@ -2426,6 +2447,7 @@ def main():
         ('FR', fetch_fr_prices),
         ('NL', fetch_nl_prices),
         ('IT', fetch_it_prices),
+        ('DE', fetch_de_prices),
     ]
     if args.countries:
         selected = [c.strip().upper() for c in args.countries.split(',')]
@@ -2436,12 +2458,25 @@ def main():
         fetchers = all_fetchers
 
     local_only_requested = {cc for cc, _ in fetchers} & LOCAL_ONLY_COUNTRIES
-    if local_only_requested and (not INPUT_DIR or SAVE_MODE):
+    if local_only_requested and not INPUT_DIR:
         print(f"Error: {', '.join(sorted(local_only_requested))} require --local-data "
               f"(no public API for prices/wages).\n"
               f"Use --local-data <dir> or exclude with --countries.",
               file=sys.stderr)
         sys.exit(1)
+    if local_only_requested and SAVE_MODE:
+        missing = [cc for cc in sorted(local_only_requested)
+                   if not (INPUT_DIR / f"{cc}_prices.csv").exists()]
+        if missing:
+            print(f"Error: {', '.join(missing)} require local price data.\n"
+                  f"Prepare {', '.join(f'{cc}_prices.csv' for cc in missing)} first.",
+                  file=sys.stderr)
+            sys.exit(1)
+        present = sorted(local_only_requested - set(missing))
+        if present:
+            print(f"[*] {', '.join(present)}: local-only countries — prices and wages "
+                  f"have no public API and will be read from pre-prepared CSVs, "
+                  f"not re-fetched. Employment and area are fetched from Eurostat.")
 
     if INPUT_DIR:
         mode = "Using local data from" if not SAVE_MODE else "Will save fetched data to"
