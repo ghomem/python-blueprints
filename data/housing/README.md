@@ -1,7 +1,7 @@
 # Housing & Employment - Regional Analysis Tools
 
 Scripts for analysing NUTS-3 regional employment patterns and housing
-affordability across PT, ES, FR, IT and NL (312 regions).
+affordability across PT, ES, FR, IT, NL and DE.
 
 **Dependencies:** `sudo apt install python3-requests python3-pandas python3-matplotlib python3-openpyxl python3-geopandas`
 
@@ -34,6 +34,9 @@ python3 density_vs_price.py \
   --map 2023 \
   --map-density \
   --merge-paris
+
+# Germany at NUTS-2 (aggregate 400 NUTS-3 Kreise into 38 Regierungsbezirke)
+python3 density_vs_price.py --local-data --countries DE --aggregate DE 2023
 ```
 
 ### Options
@@ -62,6 +65,7 @@ python3 density_vs_price.py \
 | `--map-vcenter FLOAT` | Effort value that maps to white/midpoint |
 | `--map-cmap COLOURS` | Override map colourmap (e.g. `"#2166ac,#ffffff,#b2182b"`) |
 | `--bg-color HEX` | Background colour for all plots |
+| `--aggregate CC[,CC]` | Roll listed countries from NUTS-3 to NUTS-2 (employment-weighted). Useful for DE where 400 Kreise are too granular |
 | `--bar-color HEX` | Override bar colour for bar charts |
 
 ### Output
@@ -86,6 +90,12 @@ and percentage error per region. Requires year 2023 (tourism data constraint).
 | **FR** | DVF open data (median transaction €/m²); Alsace-Moselle excluded | INSEE DADS/DSN (gross annual salary EQTP, 2022) | Eurostat |
 | **IT** | Agenzia delle Entrate OMI (appraised market values €/m²) | INPS Osservatorio (mean gross annual pay) | Eurostat |
 | **NL** | CBS StatLine (mean transaction €/m²) | CBS Regionale rekeningen (compensation / employees ÷ 1.27) | Eurostat |
+| **DE** | BBSR/AK OGA (used apartments €/m², Kreis level) | VGRdL (gross annual wage per employee, Kreis level) | Eurostat |
+
+**Local-only countries (DE, IT):** prices and wages have no public API — they
+are read from pre-prepared CSVs produced by `prepare_de.py` / manual download.
+Employment and area are still fetched from Eurostat. In `--save-data` mode the
+script reads these CSVs from `input/` and prints a `[local-only]` notice.
 
 Regions using the Eurostat NUTS-2 wage fallback (different definition - includes
 employer contributions) are marked with a **black circle** on plots and excluded
@@ -257,6 +267,10 @@ change maps; `share-scatter` produces a scatter plot of starting share vs change
   départements (FR105, FR106, FR107) into a single employment-weighted data
   point. Used by `density_vs_price.py --merge-paris` and
   `concentration.py --merge-paris`.
+
+- **prepare_de.py** - Converts raw BBSR price data and VGRdL wage data
+  into pipeline-format CSVs (`DE_prices.csv`, `DE_wages.csv`). Matches
+  400 BBSR Kreis names to Eurostat NUTS-3 codes.
 
 - **map_utils.py** - Shared choropleth map rendering utilities used by both
   `density_vs_price.py` and `concentration.py`.
