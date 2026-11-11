@@ -142,6 +142,7 @@ _MAP_VCENTER: float | None = None # set by --map-vcenter
 _NO_MAP_LABELS: bool = False      # set by --no-map-labels
 _MAP_VALUES: bool = False         # set by --map-values
 _MERGE_PARIS: bool = False        # set by --merge-paris
+_AGGREGATE_COUNTRIES: set = set() # set by --aggregate
 
 from paris_merge import (PARIS_MERGE_CODES, PARIS_MERGED_CODE, PARIS_MERGED_NAME,
                           merge_paris_geometry as _merge_paris_geometry_impl,
@@ -1352,6 +1353,35 @@ def build_scatter_data(country: str, prices_df: pd.DataFrame, year: int) -> pd.D
     return merged
 
 
+def _aggregate_to_nuts2(df: pd.DataFrame) -> pd.DataFrame:
+    """Roll NUTS-3 scatter data up to NUTS-2 (employment-weighted)."""
+    d = df.copy()
+    d['nuts2'] = d['nuts3'].str[:4]
+
+    rows = []
+    for nuts2, g in d.groupby('nuts2'):
+        w = g['employment_ths'].values
+        row = {
+            'nuts3': nuts2,
+            'name': g.loc[g['employment_ths'].idxmax(), 'name'],
+            'employment_ths': g['employment_ths'].sum(),
+            'area_km2': g['area_km2'].sum(),
+            'price_eur_m2': np.average(g['price_eur_m2'], weights=w),
+            'avg_annual_wage': np.average(g['avg_annual_wage'], weights=w),
+            'wage_fallback': g['wage_fallback'].any(),
+        }
+        if 'nights_per_worker' in g.columns:
+            row['nights_per_worker'] = np.average(
+                g['nights_per_worker'].fillna(0), weights=w)
+        rows.append(row)
+
+    agg = pd.DataFrame(rows)
+    agg['jobs_per_km2'] = (agg['employment_ths'] * 1000) / agg['area_km2']
+    agg['monthly_wage'] = agg['avg_annual_wage'] / 12
+    agg['effort_months_per_m2'] = agg['price_eur_m2'] / agg['monthly_wage']
+    return agg
+
+
 def _merge_paris_geometry(gdf):
     return _merge_paris_geometry_impl(gdf)
 
@@ -1943,7 +1973,8 @@ def plot_scatter(df: pd.DataFrame, country: str, year: int, output_file: str,
 
     ax.set_xlabel('Employment Density (jobs / km²)', fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs {mc["title"]} · {cc} NUTS-3 ({year})',
+    nuts_level = 'NUTS-2' if cc in _AGGREGATE_COUNTRIES else 'NUTS-3'
+    ax.set_title(f'Employment Density vs {mc["title"]} · {cc} {nuts_level} ({year})',
                  fontsize=14, fontweight='bold', pad=15)
 
     fig.tight_layout()
@@ -2054,7 +2085,8 @@ def plot_combined(datasets: list[tuple[str, pd.DataFrame]], year: int, output_fi
     ax.set_xlabel('Employment Density (jobs / km²' + (', log scale)' if log_x else ')'),
                   fontsize=12, labelpad=10)
     ax.set_ylabel(mc['ylabel'], fontsize=12, labelpad=10)
-    ax.set_title(f'Employment Density vs {mc["title"]} · {countries_label} NUTS-3 ({year})',
+    nuts_tag = 'NUTS-2/3' if _AGGREGATE_COUNTRIES else 'NUTS-3'
+    ax.set_title(f'Employment Density vs {mc["title"]} · {countries_label} {nuts_tag} ({year})',
                  fontsize=14, fontweight='bold', pad=15)
     _lc = _BG_COLOR or '#f5f0e8'
     if tourism:
@@ -2143,7 +2175,8 @@ def plot_tourism_scatter(datasets: list[tuple[str, pd.DataFrame]], year: int,
     ax.set_xlabel('Tourist nights / worker / year', fontsize=12)
     ax.set_ylabel(mc['ylabel'], fontsize=12)
     tag = '_'.join(cc for cc, _ in datasets)
-    ax.set_title(f'Tourism Intensity vs {mc["title"]} · {tag} NUTS-3 ({year})',
+    nt = 'NUTS-2/3' if _AGGREGATE_COUNTRIES else 'NUTS-3'
+    ax.set_title(f'Tourism Intensity vs {mc["title"]} · {tag} {nt} ({year})',
                  fontsize=14, fontweight='bold')
     _lc = _BG_COLOR or '#f5f0e8'
     ax.legend(fontsize=10, facecolor=_lc, edgecolor=_lc)
@@ -2374,7 +2407,16 @@ def main():
                         help='Produce a summary table (PNG+CSV) of R² for single-variable '
                              'fits per country: density-only and (if --tourism) tourism-only, '
                              'with and without outliers.')
+    parser.add_argument('--aggregate', metavar='CC[,CC]', type=str, default=None,
+                        help='Aggregate listed countries from NUTS-3 to NUTS-2 before '
+                             'plotting. Employment-weighted prices/wages, summed '
+                             'employment/area. Useful for DE where NUTS-3 splits '
+                             'cities from hinterland (e.g. --aggregate DE).')
     args = parser.parse_args()
+
+    if args.aggregate and (args.map or args.map_density):
+        parser.error("--aggregate is incompatible with --map / --map-density "
+                     "(aggregated NUTS-2 data won't match NUTS-3 geometry)")
 
     if args.brand_joined_map and not args.join_maps:
         parser.error("--brand-joined-map requires --join-maps")
@@ -2432,6 +2474,10 @@ def main():
     if args.merge_paris:
         global _MERGE_PARIS
         _MERGE_PARIS = True
+
+    global _AGGREGATE_COUNTRIES
+    if args.aggregate:
+        _AGGREGATE_COUNTRIES = {c.strip().upper() for c in args.aggregate.split(',')}
 
     year     = args.year
     outliers = ('highlight' if args.highlight_outliers
@@ -2514,8 +2560,13 @@ def main():
                 df = add_tourism_intensity(df, tourism)
                 matched = df['nights_per_worker'].notna().sum()
                 print(f"  [{country}] Tourism data matched for {matched}/{len(df)} regions")
+            if country in _AGGREGATE_COUNTRIES:
+                n3 = len(df)
+                df = _aggregate_to_nuts2(df)
+                print(f"  [{country}] Aggregated {n3} NUTS-3 → {len(df)} NUTS-2 regions")
             df = _add_mortgage_years(df)
-            print(f"[{country}] {len(df)} NUTS-3 regions matched for {use_year}")
+            level = "NUTS-2" if country in _AGGREGATE_COUNTRIES else "NUTS-3"
+            print(f"[{country}] {len(df)} {level} regions matched for {use_year}")
             country_data.append((country, df, use_year))
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
