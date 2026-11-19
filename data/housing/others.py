@@ -9,6 +9,7 @@ Subcommands:
     burden          Subjective housing burden by country (EU-SILC).
     oecd-burden     Mortgage burden by country (OECD HC1.2).
     oecd-burden-ts  Mortgage burden time series by country (OECD HC1.2).
+    oecd-rent-ts    Rent burden time series by country (OECD HC1.2).
 
 """
 
@@ -294,6 +295,7 @@ OECD_HC12_URL = (
 )
 OECD_XLSX_NAME = 'others_oecd_hc12.xlsx'
 OECD_CSV_NAME = 'others_oecd_mortgage_burden.csv'
+OECD_RENT_CSV_NAME = 'others_oecd_rent_burden.csv'
 
 OECD_COUNTRY_MAP = {
     'France': 'FR', 'Italy': 'IT', 'Netherlands': 'NL',
@@ -303,8 +305,9 @@ OECD_COUNTRY_MAP = {
 }
 
 
-def _parse_oecd_xlsx(xlsx_path: Path) -> pd.DataFrame:
-    """Extract mortgage burden time series from OECD HC1.2 XLSX."""
+def _parse_oecd_xlsx(xlsx_path: Path,
+                     tenure: str = 'Owner with mortgage') -> pd.DataFrame:
+    """Extract burden time series from OECD HC1.2 XLSX for a given tenure type."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = wb['HC12_A1']
 
@@ -320,8 +323,15 @@ def _parse_oecd_xlsx(xlsx_path: Path) -> pd.DataFrame:
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=False):
         first = row[0].value
         if (first and isinstance(first, str)
-                and first.strip() == 'Owner with mortgage'):
-            country_cell = ws.cell(row=row[0].row - 1, column=1).value
+                and first.strip() == tenure):
+            r = row[0].row
+            country_cell = None
+            for offset in (1, 2, 3):
+                candidate = ws.cell(row=r - offset, column=1).value
+                if (candidate and isinstance(candidate, str)
+                        and candidate.strip() in OECD_COUNTRY_MAP):
+                    country_cell = candidate
+                    break
             if not country_cell or country_cell.strip() not in OECD_COUNTRY_MAP:
                 continue
             cc = OECD_COUNTRY_MAP[country_cell.strip()]
@@ -361,6 +371,33 @@ def fetch_oecd_burden(countries: list[str]) -> pd.DataFrame:
         tmp.unlink()
 
     _save_csv(df, OECD_CSV_NAME)
+    return df[df['geo'].isin(countries)].reset_index(drop=True)
+
+
+def fetch_oecd_rent_burden(countries: list[str]) -> pd.DataFrame:
+    """Get OECD rent burden data, preferring local CSV."""
+    cached = _load_csv(OECD_RENT_CSV_NAME)
+    if cached is not None:
+        return cached[cached['geo'].isin(countries)].reset_index(drop=True)
+
+    xlsx_local = INPUT_DIR / OECD_XLSX_NAME if INPUT_DIR else None
+    if xlsx_local and xlsx_local.exists():
+        print(f"  [local] {xlsx_local}")
+        df = _parse_oecd_xlsx(xlsx_local, tenure='Rent (private and subsidized)')
+    else:
+        print(f"  Downloading OECD HC1.2 XLSX...")
+        r = requests.get(OECD_HC12_URL, timeout=120)
+        r.raise_for_status()
+        tmp = Path(tempfile.mktemp(suffix='.xlsx'))
+        tmp.write_bytes(r.content)
+        df = _parse_oecd_xlsx(tmp, tenure='Rent (private and subsidized)')
+        if SAVE_MODE and INPUT_DIR:
+            dest = INPUT_DIR / OECD_XLSX_NAME
+            shutil.copy2(tmp, dest)
+            print(f"  [saved] {dest}")
+        tmp.unlink()
+
+    _save_csv(df, OECD_RENT_CSV_NAME)
     return df[df['geo'].isin(countries)].reset_index(drop=True)
 
 
@@ -474,6 +511,63 @@ def cmd_oecd_burden_ts(args):
     print(f"[+] CSV saved to: {csv_path}")
 
 
+def plot_oecd_rent_ts(df: pd.DataFrame, countries: list[str],
+                      output_file: str):
+    """Line chart: OECD rent burden time series per country."""
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    _apply_bg()
+    fig, ax = plt.subplots(figsize=(9, 5.5), dpi=300)
+
+    yr_min, yr_max = int(df['year'].min()), int(df['year'].max())
+
+    for cc in countries:
+        sub = df[df['geo'] == cc].sort_values('year')
+        if sub.empty:
+            continue
+        color = COUNTRY_COLORS.get(cc, '#333333')
+        ax.plot(sub['year'], sub['pct'], marker='o', markersize=4,
+                linewidth=2, color=color, label=cc, zorder=3)
+
+    ax.set_ylabel('% of disposable income', fontsize=11, labelpad=10)
+    ax.set_xlabel('')
+    fig.suptitle('Median Rent Burden Over Time', fontsize=13,
+                 fontweight='bold', y=0.98)
+    ax.set_title(f'OECD HC1.2 · {yr_min}–{yr_max}', fontsize=10, pad=8)
+
+    ax.set_xticks(range(yr_min, yr_max + 1))
+    ax.set_xticklabels([str(y) for y in range(yr_min, yr_max + 1)],
+                       rotation=45, ha='right', fontsize=9)
+    ax.set_xlim(yr_min - 0.5, yr_max + 0.5)
+    ax.legend(fontsize=9, loc='best')
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] OECD rent burden time series saved to: {output_file}")
+
+
+def cmd_oecd_rent_ts(args):
+    """Handle the 'oecd-rent-ts' subcommand."""
+    countries = [c.strip().upper() for c in args.countries.split(',')]
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df = fetch_oecd_rent_burden(countries)
+    if df.empty:
+        print("[!] No data — cannot produce chart.", file=sys.stderr)
+        sys.exit(1)
+
+    yr_min, yr_max = int(df['year'].min()), int(df['year'].max())
+    yr_label = f'{yr_min}_{yr_max}'
+    png_path = str(out_dir / f'others_oecd_rent_burden_ts_{yr_label}.png')
+    plot_oecd_rent_ts(df, countries, png_path)
+
+    csv_path = out_dir / f'others_oecd_rent_burden_ts_{yr_label}.csv'
+    df.to_csv(csv_path, index=False, float_format='%.1f')
+    print(f"[+] CSV saved to: {csv_path}")
+
+
 def cmd_oecd_burden(args):
     """Handle the 'oecd-burden' subcommand."""
     countries = [c.strip().upper() for c in args.countries.split(',')]
@@ -553,6 +647,20 @@ def main():
                             const='input',
                             help='Use previously saved data from DIR')
 
+    sp_rent_ts = sub.add_parser('oecd-rent-ts',
+                                help='Rent burden time series (OECD HC1.2)')
+    sp_rent_ts.add_argument('--countries', type=str, default='PT,ES,FR,IT,NL',
+                            help='Comma-separated country codes (default: PT,ES,FR,IT,NL)')
+    sp_rent_ts.add_argument('--output-dir', type=str,
+                            default='/tmp/density_vs_price',
+                            help='Output directory')
+    sp_rent_ts.add_argument('--save-data', metavar='DIR', nargs='?',
+                            const='input',
+                            help='Download and save raw data to DIR (default: input/)')
+    sp_rent_ts.add_argument('--local-data', metavar='DIR', nargs='?',
+                            const='input',
+                            help='Use previously saved data from DIR')
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -583,6 +691,8 @@ def main():
         cmd_oecd_burden(args)
     elif args.command == 'oecd-burden-ts':
         cmd_oecd_burden_ts(args)
+    elif args.command == 'oecd-rent-ts':
+        cmd_oecd_rent_ts(args)
 
 
 if __name__ == "__main__":
