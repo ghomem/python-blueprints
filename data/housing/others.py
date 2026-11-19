@@ -8,6 +8,7 @@ Subcommands:
     expenditure     Housing cost burden by country (EU-SILC).
     burden          Subjective housing burden by country (EU-SILC).
     oecd-burden     Mortgage burden by country (OECD HC1.2).
+    oecd-burden-ts  Mortgage burden time series by country (OECD HC1.2).
 
 """
 
@@ -410,6 +411,69 @@ def plot_oecd_burden(df: pd.DataFrame, countries: list[str],
     print(f"[+] OECD mortgage burden chart saved to: {output_file}")
 
 
+COUNTRY_COLORS = {
+    'PT': '#d95f02', 'ES': '#0051b5', 'FR': '#2ca02c',
+    'NL': '#7b2d8e', 'IT': '#9b2335',
+}
+
+
+def plot_oecd_burden_ts(df: pd.DataFrame, countries: list[str],
+                        output_file: str):
+    """Line chart: OECD mortgage burden time series per country."""
+    plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid'
+                  in plt.style.available else 'default')
+    _apply_bg()
+    fig, ax = plt.subplots(figsize=(9, 5.5), dpi=300)
+
+    yr_min, yr_max = int(df['year'].min()), int(df['year'].max())
+
+    for cc in countries:
+        sub = df[df['geo'] == cc].sort_values('year')
+        if sub.empty:
+            continue
+        color = COUNTRY_COLORS.get(cc, '#333333')
+        ax.plot(sub['year'], sub['pct'], marker='o', markersize=4,
+                linewidth=2, color=color, label=cc, zorder=3)
+
+    ax.set_ylabel('% of disposable income', fontsize=11, labelpad=10)
+    ax.set_xlabel('')
+    fig.suptitle('Median Mortgage Burden Over Time', fontsize=13,
+                 fontweight='bold', y=0.98)
+    ax.set_title(f'OECD HC1.2 · {yr_min}–{yr_max}', fontsize=10, pad=8)
+
+    ax.set_xticks(range(yr_min, yr_max + 1))
+    ax.set_xticklabels([str(y) for y in range(yr_min, yr_max + 1)],
+                       rotation=45, ha='right', fontsize=9)
+    ax.set_xlim(yr_min - 0.5, yr_max + 0.5)
+    ax.legend(fontsize=9, loc='best')
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300)
+    plt.close(fig)
+    print(f"[+] OECD mortgage burden time series saved to: {output_file}")
+
+
+def cmd_oecd_burden_ts(args):
+    """Handle the 'oecd-burden-ts' subcommand."""
+    countries = [c.strip().upper() for c in args.countries.split(',')]
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df = fetch_oecd_burden(countries)
+    if df.empty:
+        print("[!] No data — cannot produce chart.", file=sys.stderr)
+        sys.exit(1)
+
+    yr_min, yr_max = int(df['year'].min()), int(df['year'].max())
+    yr_label = f'{yr_min}_{yr_max}'
+    png_path = str(out_dir / f'others_oecd_mortgage_burden_ts_{yr_label}.png')
+    plot_oecd_burden_ts(df, countries, png_path)
+
+    csv_path = out_dir / f'others_oecd_mortgage_burden_ts_{yr_label}.csv'
+    df.to_csv(csv_path, index=False, float_format='%.1f')
+    print(f"[+] CSV saved to: {csv_path}")
+
+
 def cmd_oecd_burden(args):
     """Handle the 'oecd-burden' subcommand."""
     countries = [c.strip().upper() for c in args.countries.split(',')]
@@ -475,6 +539,20 @@ def main():
     sp_oecd.add_argument('--local-data', metavar='DIR', nargs='?', const='input',
                          help='Use previously saved data from DIR')
 
+    sp_oecd_ts = sub.add_parser('oecd-burden-ts',
+                                help='Mortgage burden time series (OECD HC1.2)')
+    sp_oecd_ts.add_argument('--countries', type=str, default='PT,ES,FR,IT,NL',
+                            help='Comma-separated country codes (default: PT,ES,FR,IT,NL)')
+    sp_oecd_ts.add_argument('--output-dir', type=str,
+                            default='/tmp/density_vs_price',
+                            help='Output directory')
+    sp_oecd_ts.add_argument('--save-data', metavar='DIR', nargs='?',
+                            const='input',
+                            help='Download and save raw data to DIR (default: input/)')
+    sp_oecd_ts.add_argument('--local-data', metavar='DIR', nargs='?',
+                            const='input',
+                            help='Use previously saved data from DIR')
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -503,6 +581,8 @@ def main():
         cmd_burden(args)
     elif args.command == 'oecd-burden':
         cmd_oecd_burden(args)
+    elif args.command == 'oecd-burden-ts':
+        cmd_oecd_burden_ts(args)
 
 
 if __name__ == "__main__":
